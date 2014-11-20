@@ -11,7 +11,7 @@
 <html>
 <head>
   <meta name="viewport" content="width=device-width, minimum-scale=1.0, initial-scale=1.0, user-scalable=yes">
-  <title>seed-element Demo</title>
+  <title>&lt;polymer-ldf-client&gt; Demo</title>
 
   <script src="../webcomponentsjs/webcomponents.min.js"></script>
   <link rel="import" href="polymer-ldf-client.html">
@@ -19,9 +19,26 @@
 </head>
 <body unresolved>
 
-  <p>An example of using <code>&lt;polymer-ldf-client&gt;</code>:</p>
+  <p>An example of using <code>&lt;polymer-ldf-client&gt;</code></p>
 
-  <polymer-ldf-client></polymer-ldf-client>
+  <polymer-ldf-client query="
+    SELECT DISTINCT ?frag WHERE {
+      ?a a &lt;http://advene.org/ns/cinelab/ld#Annotation&gt; ;
+        &lt;http://advene.org/ns/cinelab/ld#hasFragment&gt; ?frag ;
+        &lt;http://advene.org/ns/cinelab/ld#taggedWith&gt;
+          [ &lt;http://purl.org/dc/elements/1.1/title&gt; 'personnages: Margaret'],
+          [ &lt;http://purl.org/dc/elements/1.1/title&gt; 'personnages: Grand Papa Pollitt'];
+        .
+    }" start-fragment="http://spectacleenlignes.fr/ldf/spectacle_en_lignes">
+  </polymer-ldf-client>
 
+  <script>
+    document.addEventListener('polymer-ready', function() {
+      var ldfClient = document.querySelector("polymer-ldf-client");
+      ldfClient.addEventListener("query-response", function(e) {
+        document.body.innerHTML += e.detail.response;
+      });
+    });
+  </script>
 </body>
 </html>
