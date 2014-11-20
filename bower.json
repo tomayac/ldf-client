@@ -1,19 +1,18 @@
 {
-  "name": "seed-element",
-  "version": "0.0.0",
+  "name": "polymer-ldf-client",
+  "version": "0.0.1",
   "authors": [
-    "Anonymous <anonymous@example.com>"
+    "Thomas Steiner <tomac@google.com>"
   ],
-  "description": "Element providing solution to no problem in particular.",
+  "description": "Polymer Linked Data Fragments client",
   "keywords": [
-    "web-component",
-    "web-components",
-    "polymer",
-    "seed"
+    "linked data fragments",
+    "ldf",
+    "client"
   ],
-  "main": "seed-element.html",
-  "license": "MIT",
-  "homepage": "https://github.com/<USERNAME>/seed-element/",
+  "main": "polymer-ldf-client.html",
+  "license": "Apache 2.0",
+  "homepage": "https://github.com/tomayac/polymer-ldf-client",
   "ignore": [
     "/.*",
     "/tests/"

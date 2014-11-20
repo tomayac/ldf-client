@@ -8,7 +8,8 @@
     subject to an additional IP rights grant found at http://polymer.github.io/PATENTS.txt
 -->
 <link rel="import" href="../polymer/polymer.html">
-
+<script src="./dependencies/jquery-2.1.0.js"></script>
+<script src="./dependencies/ldf-client-browser.js"></script>
 <!--
 Element providing solution to no problem in particular.
 
@@ -21,15 +22,10 @@ Element providing solution to no problem in particular.
 @status alpha
 @homepage http://github.com/tomayac/polymer-ldf-client-
 -->
-<polymer-element name="polymer-ldf-client" attributes="query">
+<polymer-element name="polymer-ldf-client" attributes="start-fragment query">
 
   <template>
-
     <link rel="stylesheet" href="polymer-ldf-client.css">
-
-    <h1>Hello from seed-element</h1>
-    <content></content>
-
   </template>
 
   <script src="polymer-ldf-client.js"></script>
