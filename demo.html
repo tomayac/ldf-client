@@ -36,7 +36,7 @@
     document.addEventListener('polymer-ready', function() {
       var ldfClient = document.querySelector("polymer-ldf-client");
       ldfClient.addEventListener("query-response", function(e) {
-        document.body.innerHTML += e.detail.response;
+         document.body.innerText += JSON.stringify(e.detail) + '\n';
       });
     });
   </script>

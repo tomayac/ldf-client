@@ -17,20 +17,9 @@ Polymer({
     var results = new ldf.SparqlIterator(query, {
       fragmentsClient: fragmentsClient,
     });
-
-    var data = '';
-    (function showNext() {
-      var result = results.read();
-      if (result === null) {
-        results.once('readable', showNext);
-      } else {
-        data += JSON.stringify(result);
-        console.log(JSON.stringify(result));
-        console.log('Fired "query-response"');
-        that.fire('query-response', data);
-      }
-    })();
-
+    results.on('data', function (data) {
+      that.fire('query-response', data);
+    });
   }
 
 });
