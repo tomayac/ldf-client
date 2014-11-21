@@ -24,6 +24,64 @@ Element providing solution to no problem in particular.
 @status alpha
 @homepage http://github.com/tomayac/polymer-ldf-client-
 -->
-<polymer-element name="polymer-ldf-client" hidden attributes="start-fragment query">
-  <script src="polymer-ldf-client.js"></script>
+<polymer-element name="polymer-ldf-client" hidden attributes="startFragment query responseFormat">
+  <script>
+    Polymer({
+
+      DEBUG: true,
+
+      query: '',
+
+      startFragment: '',
+
+      responseFormat: 'streaming',
+
+      ready: function() {
+        this.executeQuery();
+      },
+
+      executeQuery: function() {
+        var that = this;
+        if (!this.query) {
+          this.DEBUG && console.log('No query given.');
+          return;
+        }
+        if (!this.startFragment) {
+          this.DEBUG && console.log('No start fragment given.');
+          return;
+        }
+
+        this.DEBUG && console.log('Query:\n' + this.query);
+        this.DEBUG && console.log('Start fragment:\n' + this.startFragment);
+
+        var fragmentsClient = new ldf.FragmentsClient(this.startFragment);
+        var results = new ldf.SparqlIterator(this.query, {
+          fragmentsClient: fragmentsClient,
+        });
+
+        var data = '';
+        if (this.responseFormat === 'streaming') {
+          // Partial response
+          results.on('data', function (chunk) {
+            data += chunk;
+            that.fire('ldf-query-streaming-partial-response', chunk);
+          });
+          // Complete response
+          results.on('end', function () {
+            that.fire('ldf-query-streaming-response-end', data);
+          });
+        } else if (this.responseFormat === 'polling') {
+          (function showNext() {
+            var result = results.read();
+            if (result === null) {
+              results.once('readable', showNext);
+            } else {
+              data += JSON.stringify(result);
+              that.fire('ldf-query-polling-response', data);
+            }
+          })();
+        }
+      }
+    });
+  </script>
 </polymer-element>
