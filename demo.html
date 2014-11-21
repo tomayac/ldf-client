@@ -36,16 +36,18 @@
 
     <script>
       document.addEventListener('polymer-ready', function() {
-        var ldfClient = document.querySelector("polymer-ldf-client");
+        var ldfClient = document.querySelector('polymer-ldf-client');
 
         // Process data as it appears
-        ldfClient.addEventListener("ldf-query-streaming-response-partial", function(e) {
-           document.body.innerText += JSON.stringify(e.detail) + '\n';
+        ldfClient.addEventListener('ldf-query-streaming-response-partial',
+            function(e) {
+          document.body.innerText += '\n' + JSON.stringify(e.detail.response);
         });
 
         // Get notified once all data is received
-        ldfClient.addEventListener("ldf-query-streaming-response-end", function() {
-           alert('Received all data');
+        ldfClient.addEventListener('ldf-query-streaming-response-end',
+            function() {
+          alert('Received all data');
         });
       });
     </script>
