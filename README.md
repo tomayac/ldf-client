@@ -29,14 +29,12 @@ The example below shows basic usage instructions for the element.
 <!doctype html>
 <html>
   <head>
-    <!-- Import Polymer -->
     <script src="../webcomponentsjs/webcomponents.min.js"></script>
-    <!-- Import polymer-ldf-client -->
     <link rel="import" href="polymer-ldf-client.html">
   </head>
   <body unresolved>
-    <!-- Add the element -->
     <polymer-ldf-client
+        id="polymer-ldf-client-streaming"
         responseFormat="streaming"
         query="SELECT DISTINCT ?frag WHERE {
                  ?a a &lt;http://advene.org/ns/cinelab/ld#Annotation&gt; ;
@@ -49,21 +47,49 @@ The example below shows basic usage instructions for the element.
         startFragment="http://spectacleenlignes.fr/ldf/spectacle_en_lignes">
     </polymer-ldf-client>
 
-    <!-- Basic usage from JavaScript -->
+    <polymer-ldf-client
+        id="polymer-ldf-client-polling"
+        responseFormat="polling"
+        query="SELECT DISTINCT ?tag WHERE {
+                 [ a &lt;http://advene.org/ns/cinelab/ld#Annotation&gt; ;
+                   &lt;http://advene.org/ns/cinelab/ld#taggedWith&gt;
+                     [ &lt;http://purl.org/dc/elements/1.1/title&gt;  ?tag ]
+                  ]
+               }"
+        startFragment="http://spectacleenlignes.fr/ldf/spectacle_en_lignes">
+    </polymer-ldf-client>
+
+    <button value="Poll" id="button">Poll</button>
+
     <script>
       document.addEventListener('polymer-ready', function() {
-        var ldfClient = document.querySelector('polymer-ldf-client');
 
+        var ldfClientStreaming = document.querySelector('#polymer-ldf-client-streaming');
         // Process data as it appears
-        ldfClient.addEventListener('ldf-query-streaming-response-partial',
+        ldfClientStreaming.addEventListener('ldf-query-streaming-response-partial',
             function(e) {
-          document.body.innerText += '\n' + JSON.stringify(e.detail.response);
+          var pre = document.createElement('pre');
+          pre.classList.add('streaming');
+          pre.textContent = JSON.stringify(e.detail.response);
+          document.body.appendChild(pre);
+        });
+        // Get notified once all data is received
+        ldfClientStreaming.addEventListener('ldf-query-streaming-response-end', function() {
+          alert('Received all data');
         });
 
-        // Get notified once all data is received
-        ldfClient.addEventListener('ldf-query-streaming-response-end',
-            function() {
-          alert('Received all data');
+        var ldfClientPolling = document.querySelector('#polymer-ldf-client-polling');
+        // Poll for data
+        ldfClientPolling.addEventListener('ldf-query-polling-response', function(e) {
+          var pre = document.createElement('pre');
+          pre.classList.add('polling');
+          pre.textContent = JSON.stringify(e.detail.response);
+          document.body.appendChild(pre);
+        });
+
+        var button = document.querySelector('#button');
+        button.addEventListener('click', function() {
+          ldfClientPolling.showNext();
         });
       });
     </script>
