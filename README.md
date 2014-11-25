@@ -33,6 +33,7 @@ The example below shows basic usage instructions for the element.
     <link rel="import" href="polymer-ldf-client.html">
   </head>
   <body unresolved>
+    <!-- Streaming example -->
     <polymer-ldf-client
         id="polymer-ldf-client-streaming"
         responseFormat="streaming"
@@ -47,6 +48,7 @@ The example below shows basic usage instructions for the element.
         startFragment="http://spectacleenlignes.fr/ldf/spectacle_en_lignes">
     </polymer-ldf-client>
 
+    <!-- Polling example -->
     <polymer-ldf-client
         id="polymer-ldf-client-polling"
         responseFormat="polling"
@@ -63,7 +65,7 @@ The example below shows basic usage instructions for the element.
 
     <script>
       document.addEventListener('polymer-ready', function() {
-
+        /* Streaming example */
         var ldfClientStreaming = document.querySelector('#polymer-ldf-client-streaming');
         // Process data as it appears
         ldfClientStreaming.addEventListener('ldf-query-streaming-response-partial',
@@ -78,6 +80,7 @@ The example below shows basic usage instructions for the element.
           alert('Received all data');
         });
 
+        /* Polling example */
         var ldfClientPolling = document.querySelector('#polymer-ldf-client-polling');
         // Poll for data
         ldfClientPolling.addEventListener('ldf-query-polling-response', function(e) {
@@ -86,7 +89,7 @@ The example below shows basic usage instructions for the element.
           pre.textContent = JSON.stringify(e.detail.response);
           document.body.appendChild(pre);
         });
-
+        // Manually trigger polling
         var button = document.querySelector('#button');
         button.addEventListener('click', function() {
           ldfClientPolling.showNext();
