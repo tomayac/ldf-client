@@ -15,11 +15,24 @@
 
     <script src="../webcomponentsjs/webcomponents.min.js"></script>
     <link rel="import" href="polymer-ldf-client.html">
-
+    <style>
+      h1 {
+        font-size: 1.2em;
+      }
+      pre.streaming {
+        color: red;
+      }
+      pre.polling {
+        color: blue;
+      }
+    </style>
   </head>
   <body unresolved>
 
-    <p>An example of using <code>&lt;polymer-ldf-client&gt;</code></p>
+    <h1>An example of using <code>&lt;polymer-ldf-client&gt;</code></h1>
+
+    <p>Streaming results are displayed in <pre class="streaming">red</pre></p>
+    <p>Polling results are displayed in <pre class="polling">blue</pre></p>
 
     <polymer-ldf-client
         id="polymer-ldf-client-streaming"
@@ -47,27 +60,37 @@
         startFragment="http://spectacleenlignes.fr/ldf/spectacle_en_lignes">
     </polymer-ldf-client>
 
+    <button value="Poll" id="button">Poll</button>
+
     <script>
       document.addEventListener('polymer-ready', function() {
-        var ldfClientStreaming = document.querySelector('#polymer-ldf-client-streaming');
-        var ldfClientPolling = document.querySelector('#polymer-ldf-client-polling');
 
+        var ldfClientStreaming = document.querySelector('#polymer-ldf-client-streaming');
         // Process data as it appears
         ldfClientStreaming.addEventListener('ldf-query-streaming-response-partial',
             function(e) {
-          document.body.innerText += '\n' + JSON.stringify(e.detail.response);
+          var pre = document.createElement('pre');
+          pre.classList.add('streaming');
+          pre.textContent = JSON.stringify(e.detail.response);
+          document.body.appendChild(pre);
         });
-
         // Get notified once all data is received
-        ldfClientStreaming.addEventListener('ldf-query-streaming-response-end',
-            function() {
+        ldfClientStreaming.addEventListener('ldf-query-streaming-response-end', function() {
           alert('Received all data');
         });
 
+        var ldfClientPolling = document.querySelector('#polymer-ldf-client-polling');
         // Poll for data
-        ldfClientStreaming.addEventListener('ldf-query-polling-response',
-            function(e) {
-          document.body.innerText += '\n' + JSON.stringify(e.detail.response);
+        ldfClientPolling.addEventListener('ldf-query-polling-response', function(e) {
+          var pre = document.createElement('pre');
+          pre.classList.add('polling');
+          pre.textContent = JSON.stringify(e.detail.response);
+          document.body.appendChild(pre);
+        });
+
+        var button = document.querySelector('#button');
+        button.addEventListener('click', function() {
+          ldfClientPolling.showNext();
         });
       });
     </script>

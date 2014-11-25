@@ -24,17 +24,21 @@ Element providing solution to no problem in particular.
 @status alpha
 @homepage http://github.com/tomayac/polymer-ldf-client-
 -->
-<polymer-element name="polymer-ldf-client" hidden attributes="startFragment query responseFormat">
+<polymer-element name="polymer-ldf-client" hidden attributes="startFragment query responseFormat auto">
   <script>
     Polymer({
 
-      DEBUG: true,
+      _DEBUG: true,
+
+      _results: false,
 
       query: '',
 
       startFragment: '',
 
       responseFormat: 'streaming',
+
+      auto: false,
 
       ready: function() {
         ldf.Logger.setLevel('warning');
@@ -44,26 +48,26 @@ Element providing solution to no problem in particular.
       executeQuery: function() {
         var that = this;
         if (!this.query) {
-          this.DEBUG && console.log('No query given.');
+          this._DEBUG && console.log('No query given.');
           return;
         }
         if (!this.startFragment) {
-          this.DEBUG && console.log('No start fragment given.');
+          this._DEBUG && console.log('No start fragment given.');
           return;
         }
 
-        this.DEBUG && console.log('Query:\n' + this.query);
-        this.DEBUG && console.log('Start fragment:\n' + this.startFragment);
-        this.DEBUG && console.log('Response format:\n' + this.responseFormat);
+        this._DEBUG && console.log('Query:\n' + this.query);
+        this._DEBUG && console.log('Start fragment:\n' + this.startFragment);
+        this._DEBUG && console.log('Response format:\n' + this.responseFormat);
 
         var fragmentsClient = new ldf.FragmentsClient(this.startFragment);
         var results = new ldf.SparqlIterator(this.query, {
           fragmentsClient: fragmentsClient,
         });
 
-        var data = '';
         if (this.responseFormat === 'streaming') {
           // Partial response
+          var data = '';
           results.on('data', function(chunk) {
             chunk = JSON.stringify(chunk);
             data += chunk;
@@ -76,17 +80,44 @@ Element providing solution to no problem in particular.
             that.fire('ldf-query-streaming-response-end', {response: data});
           });
         } else if (this.responseFormat === 'polling') {
-          (function showNext() {
-            var result = results.read();
-            if (result === null) {
-              results.once('readable', showNext);
-            } else {
-              data += JSON.stringify(result);
-              that.fire('ldf-query-polling-response', {response: data});
-            }
-          })();
+          this._results = results;
+          return this.showNext();
+        }
+      },
+
+      go: function() {
+        return this.executeQuery();
+      },
+
+      showNext: function() {
+        var that = this;
+        if (!that._results) {
+          return;
+        }
+        (function _showNext() {
+          var result = that._results.read();
+          if (result === null) {
+            that._results.once('readable', _showNext);
+          } else {
+            that.fire('ldf-query-polling-response', {
+              response: JSON.stringify(result)
+            });
+          }
+        })();
+      },
+
+      queryChanged: function() {
+        if (this.auto) {
+          return this.executeQuery();
+        }
+      },
+
+      startFragmentChanged: function() {
+        if (this.auto) {
+          return this.executeQuery();
         }
       }
+
     });
   </script>
 </polymer-element>
