@@ -20,6 +20,9 @@ $ cd ..
 $ python -m SimpleHTTPServer
 ```
 
+Finally visit [http://localhost:8000/polymer-ldf-client/](http://localhost:8000/polymer-ldf-client/)
+and follow the [demo](http://localhost:8000/polymer-ldf-client/demo.html) link. 
+
 Basic Usage
 ===========
 
