@@ -101,6 +101,32 @@ The example below shows basic usage instructions for the element.
 </html>
 ```
 
+About Linked Data Fragments
+===========================
+
+The Web is full of high-quality Linked Data,
+but we can't reliably query it.
+Public SPARQL endpoints are often unavailable,
+because they need to answer many unique queries.
+One could set up a local endpoint using data dumps,
+but that's not Web querying and
+the data is never up-to-date.
+
+[Linked Data Fragments](http://linkeddatafragments.org/) offer interfaces to 
+solve queries at the client side with server data. 
+Servers can offer data at low processing cost 
+in a way that enables client-side querying. 
+You can read more about [the concept of Linked Data Fragments](http://linkeddatafragments.org/concept/)
+and learn about available [Linked Data Fragments software](http://linkeddatafragments.org/software/).
+
+Acknowledgements
+================
+
+Building this Web Component was pretty straight-forward thanks to
+[Ruben Verborgh](http://ruben.verborgh.org/)'s
+Linked Data Fragments browser client
+[Browser.js](https://github.com/LinkedDataFragments/Browser.js).
+
 License
 =======
 Copyright 2014 Thomas Steiner (tomac@google.com)
