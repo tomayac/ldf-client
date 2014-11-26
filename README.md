@@ -71,7 +71,6 @@ The example below shows basic usage instructions for the element.
         ldfClientStreaming.addEventListener('ldf-query-streaming-response-partial',
             function(e) {
           var pre = document.createElement('pre');
-          pre.classList.add('streaming');
           pre.textContent = JSON.stringify(e.detail.response);
           document.body.appendChild(pre);
         });
@@ -85,7 +84,6 @@ The example below shows basic usage instructions for the element.
         // Poll for data
         ldfClientPolling.addEventListener('ldf-query-polling-response', function(e) {
           var pre = document.createElement('pre');
-          pre.classList.add('polling');
           pre.textContent = JSON.stringify(e.detail.response);
           document.body.appendChild(pre);
         });

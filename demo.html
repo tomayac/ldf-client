@@ -25,6 +25,9 @@
       pre.polling {
         color: blue;
       }
+      td {
+        vertical-align: top;
+      }
     </style>
   </head>
   <body unresolved>
@@ -61,6 +64,7 @@
     </polymer-ldf-client>
 
     <button value="Poll" id="button">Poll</button>
+    <table><tr><td id="td1"></td><td id="td2"></td></tr></table>
 
     <script>
       document.addEventListener('polymer-ready', function() {
@@ -72,7 +76,7 @@
           var pre = document.createElement('pre');
           pre.classList.add('streaming');
           pre.textContent = JSON.stringify(e.detail.response);
-          document.body.appendChild(pre);
+          document.querySelector('#td1').appendChild(pre);
         });
         // Get notified once all data is received
         ldfClientStreaming.addEventListener('ldf-query-streaming-response-end', function() {
@@ -85,7 +89,7 @@
           var pre = document.createElement('pre');
           pre.classList.add('polling');
           pre.textContent = JSON.stringify(e.detail.response);
-          document.body.appendChild(pre);
+          document.querySelector('#td2').appendChild(pre);
         });
 
         var button = document.querySelector('#button');
