@@ -5,6 +5,12 @@ A declarative [Linked Data Fragments](http://linkeddatafragments.org) client in 
 Simply insert the ```<polymer-ldf-client>``` in your page, fill in the required attribute values,
 and you are ready to go.
 
+Live Demo
+=========
+
+You can see a [live demo](http://tomayac.github.io/polymer-ldf-client/)
+of the Web Component in action hosted on GitHub pages.
+
 Installation
 ============
 
