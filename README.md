@@ -27,7 +27,7 @@ $ python -m SimpleHTTPServer
 ```
 
 Finally visit [http://localhost:8000/polymer-ldf-client/](http://localhost:8000/polymer-ldf-client/)
-and follow the [demo](http://localhost:8000/polymer-ldf-client/demo.html) link. 
+and follow the [demo](http://localhost:8000/polymer-ldf-client/demo.html) link.
 
 Basic Usage
 ===========
@@ -38,7 +38,7 @@ The example below shows basic usage instructions for the element.
 <!doctype html>
 <html>
   <head>
-    <script src="../webcomponentsjs/webcomponents.min.js"></script>
+    <script src="../webcomponentsjs/webcomponents-lite.min.js"></script>
     <link rel="import" href="polymer-ldf-client.html">
   </head>
   <body unresolved>
@@ -118,10 +118,10 @@ One could set up a local endpoint using data dumps,
 but that's not Web querying and
 the data is never up-to-date.
 
-[Linked Data Fragments](http://linkeddatafragments.org/) offer interfaces to 
-solve queries at the client side with server data. 
-Servers can offer data at low processing cost 
-in a way that enables client-side querying. 
+[Linked Data Fragments](http://linkeddatafragments.org/) offer interfaces to
+solve queries at the client side with server data.
+Servers can offer data at low processing cost
+in a way that enables client-side querying.
 You can read more about [the concept of Linked Data Fragments](http://linkeddatafragments.org/concept/)
 and learn about available [Linked Data Fragments software](http://linkeddatafragments.org/software/).
 

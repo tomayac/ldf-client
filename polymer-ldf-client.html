@@ -24,9 +24,23 @@ Element providing solution to no problem in particular.
 @status alpha
 @homepage http://github.com/tomayac/polymer-ldf-client-
 -->
-<polymer-element name="polymer-ldf-client" hidden attributes="startFragment query responseFormat auto">
+<dom-module id="polymer-ldf-client" hidden>
   <script>
     Polymer({
+      is: 'polymer-ldf-client',
+
+      properties: {
+        startFragment: {
+          type: String,
+          observer: 'startFragmentChanged'
+        },
+        query: {
+          type: String,
+          observer: 'queryChanged'
+        },
+        responseFormat: {type: String},
+        auto: {type: Boolean}
+      },
 
       _DEBUG: true,
 
@@ -120,4 +134,4 @@ Element providing solution to no problem in particular.
 
     });
   </script>
-</polymer-element>
+</dom-module>

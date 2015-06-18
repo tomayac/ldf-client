@@ -5,7 +5,7 @@
 window.ldf = require('ldf-client');
 window.N3  = require('ldf-client/node_modules/n3'); // expose the same N3 version as used in the client
 
-},{"ldf-client":10,"ldf-client/node_modules/n3":33}],2:[function(require,module,exports){
+},{"ldf-client":11,"ldf-client/node_modules/n3":40}],2:[function(require,module,exports){
 
 },{}],3:[function(require,module,exports){
 // http://wiki.commonjs.org/wiki/Unit_Testing/1.0
@@ -369,7 +369,9 @@ var objectKeys = Object.keys || function (obj) {
   return keys;
 };
 
-},{"util/":9}],4:[function(require,module,exports){
+},{"util/":10}],4:[function(require,module,exports){
+module.exports=require(2)
+},{"/Users/tsteiner/Documents/Browser.js/node_modules/browserify/lib/_empty.js":2}],5:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -672,7 +674,7 @@ function isUndefined(arg) {
   return arg === void 0;
 }
 
-},{}],5:[function(require,module,exports){
+},{}],6:[function(require,module,exports){
 if (typeof Object.create === 'function') {
   // implementation from standard node.js 'util' module
   module.exports = function inherits(ctor, superCtor) {
@@ -697,7 +699,7 @@ if (typeof Object.create === 'function') {
   }
 }
 
-},{}],6:[function(require,module,exports){
+},{}],7:[function(require,module,exports){
 (function (process){
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -925,7 +927,7 @@ var substr = 'ab'.substr(-1) === 'b'
 ;
 
 }).call(this,require('_process'))
-},{"_process":7}],7:[function(require,module,exports){
+},{"_process":8}],8:[function(require,module,exports){
 // shim for using process in browser
 
 var process = module.exports = {};
@@ -1013,14 +1015,14 @@ process.chdir = function (dir) {
     throw new Error('process.chdir is not supported');
 };
 
-},{}],8:[function(require,module,exports){
+},{}],9:[function(require,module,exports){
 module.exports = function isBuffer(arg) {
   return arg && typeof arg === 'object'
     && typeof arg.copy === 'function'
     && typeof arg.fill === 'function'
     && typeof arg.readUInt8 === 'function';
 }
-},{}],9:[function(require,module,exports){
+},{}],10:[function(require,module,exports){
 (function (process,global){
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -1610,7 +1612,7 @@ function hasOwnProperty(obj, prop) {
 }
 
 }).call(this,require('_process'),typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{"./support/isBuffer":8,"_process":7,"inherits":5}],10:[function(require,module,exports){
+},{"./support/isBuffer":9,"_process":8,"inherits":6}],11:[function(require,module,exports){
 /*! @license ©2013 Ruben Verborgh - Multimedia Lab / iMinds / Ghent University */
 /** Main ldf-client module exports. */
 var SparqlResultWriter = require('./lib/writers/SparqlResultWriter');
@@ -1622,45 +1624,310 @@ module.exports = {
   SparqlIterator: require('./lib/triple-pattern-fragments/SparqlIterator.js'),
   FragmentsClient: require('./lib/triple-pattern-fragments/FragmentsClient'),
   Logger: require('./lib/util/Logger'),
+  HttpClient: require('./lib/util/HttpClient'),
   SparqlResultWriter: SparqlResultWriter,
 };
 
-},{"./lib/triple-pattern-fragments/FragmentsClient":19,"./lib/triple-pattern-fragments/SparqlIterator.js":21,"./lib/util/Logger":26,"./lib/writers/SparqlResultWriter":30}],11:[function(require,module,exports){
+},{"./lib/triple-pattern-fragments/FragmentsClient":23,"./lib/triple-pattern-fragments/SparqlIterator.js":25,"./lib/util/HttpClient":31,"./lib/util/Logger":32,"./lib/writers/SparqlResultWriter":37}],12:[function(require,module,exports){
+/*! @license ©2014 Ruben Verborgh - Multimedia Lab / iMinds / Ghent University */
+/* A CompositeExtractor combines metadata from different extractors. */
+
+var MetadataExtractor = require('./MetadataExtractor'),
+    _ = require('lodash');
+
+/**
+ * Creates a new `CompositeExtractor`.
+ * @classdesc A `CompositeExtractor` combines metadata from different extractors.
+ * @param {object.<string, MetadataExtractor>|Extractor[]} extractors Metadata extractors (per type);
+ *        the extraction callback will be invoked once for each type
+ * @constructor
+ * @augments MetadataExtractor
+ */
+function CompositeExtractor(extractors) {
+  if (!(this instanceof CompositeExtractor))
+    return new CompositeExtractor(extractors);
+  MetadataExtractor.call(this);
+
+  this._extractors = _.isArray(extractors) ? { '': extractors } : extractors;
+  if (!_.any(this._extractors, 'length')) this._extractors = null;
+}
+MetadataExtractor.inherits(CompositeExtractor);
+
+/* Extracts metadata from the stream of triples. */
+CompositeExtractor.prototype._extract = function (metadata, tripleStream, callback) {
+  _.each(this._extractors || void callback(null, {}), function (extractors, type) {
+    var combined, pending = extractors.length;
+    function addMetadata(error, metadata) {
+      if (!error)
+        combined = combined ? _.defaults(combined, metadata) : metadata;
+      if (--pending === 0) {
+        var result = combined;
+        if (type) result = {}, result[type] = combined;
+        callback(null, result);
+      }
+    }
+    _.each(extractors, function (e) { e.extract(metadata, tripleStream, addMetadata); });
+  });
+};
+
+module.exports = CompositeExtractor;
+
+},{"./MetadataExtractor":15,"lodash":38}],13:[function(require,module,exports){
+/*! @license ©2014 Ruben Verborgh - Multimedia Lab / iMinds / Ghent University */
+/* A ControlsExtractor extracts hypermedia controls from a triple stream. */
+
+var MetadataExtractor = require('./MetadataExtractor'),
+    UriTemplate = require('uritemplate'),
+    rdf = require('../util/RdfUtil'),
+    assert = require('assert');
+
+// Extract these types of links from representations
+var LINK_TYPES = ['firstPage', 'nextPage', 'previousPage', 'lastPage'];
+
+/**
+ * Creates a new `ControlsExtractor`.
+ * @classdesc A `ControlsExtractor` extracts hypermedia controls from a triple stream.
+ * @constructor
+ * @augments MetadataExtractor
+ */
+function ControlsExtractor() {
+  if (!(this instanceof ControlsExtractor))
+    return new ControlsExtractor();
+  MetadataExtractor.call(this);
+}
+MetadataExtractor.inherits(ControlsExtractor);
+
+/* Extracts controls from the stream of triples. */
+ControlsExtractor.prototype._extract = function (metadata, tripleStream, callback) {
+  var controlData = Object.create(null);
+  tripleStream.on('data', function (triple) {
+    if (triple.predicate.indexOf(rdf.HYDRA) === 0) {
+      var property = triple.predicate.substr(rdf.HYDRA.length),
+          propertyData = controlData[property] || (controlData[property] = {}),
+          subjectData = propertyData[triple.subject] || (propertyData[triple.subject] = []);
+      subjectData.push(triple.object);
+    }
+  });
+  // Send the controls
+  tripleStream.on('end', function () {
+    var controls = Object.create(defaultControls);
+    controls.fragment = metadata.fragmentUrl;
+
+    // Parse the links
+    LINK_TYPES.forEach(function (property) {
+      var linkTargets = (controlData[property] || {})[controls.fragment];
+      if (linkTargets && linkTargets.length > 0)
+        Object.defineProperty(controls, property, { value: linkTargets[0], enumerable: true });
+    });
+
+    // Parse the search form
+    // TODO: Make parser independent of a specifically structured control set
+    var searchForms = controlData.search;
+    if (searchForms) {
+      assert(Object.keys(searchForms).length === 1, 'Expected 1 hydra:search');
+      var searchForm = searchForms[Object.keys(searchForms)[0]][0],
+          searchTemplates = (controlData.template || {})[searchForm] || [];
+
+      // Parse the template
+      assert(searchTemplates.length === 1, 'Expected 1 hydra:template for ' + searchForm);
+      var searchTemplateValue = rdf.getLiteralValue(searchTemplates[0]),
+          searchTemplate = UriTemplate.parse(searchTemplateValue);
+
+      // Parse the template mappings
+      var mappings = (controlData.mapping || {})[searchForm] || [];
+      assert(mappings.length === 3, 'Expected 3 hydra:mappings for ' + searchForm);
+      mappings = mappings.reduce(function (mappings, mapping) {
+        var variable = ((controlData.variable || {})[mapping] || [])[0],
+            property = ((controlData.property || {})[mapping] || [])[0];
+        assert(variable, 'Expected a hydra:variable for ' + mapping);
+        assert(property, 'Expected a hydra:property for ' + mapping);
+        mappings[property] = rdf.getLiteralValue(variable);
+        return mappings;
+      }, {});
+
+      // Gets the URL of the Triple Pattern Fragment with the given triple pattern
+      controls.getFragmentUrl = function (triplePattern) {
+        var variables = {};
+        variables[mappings[rdf.RDF_SUBJECT]]   = triplePattern.subject;
+        variables[mappings[rdf.RDF_PREDICATE]] = triplePattern.predicate;
+        variables[mappings[rdf.RDF_OBJECT]]    = triplePattern.object;
+        return searchTemplate.expand(variables);
+      };
+    }
+    callback(null, controls);
+  });
+};
+
+// Default hypermedia controls for fragments
+var defaultControls = {
+  getFragmentUrl: function (triplePattern) {
+    throw new Error('The fragment ' + this.fragment +
+                    ' does not contain Triple Pattern Fragment hypermedia controls.');
+  },
+};
+LINK_TYPES.forEach(function (property) {
+  Object.defineProperty(defaultControls, property, {
+    get: function () {
+      throw new Error('The fragment ' + this.fragment +
+                      ' does not contain controls for ' + property + '.');
+    },
+  });
+});
+
+module.exports = ControlsExtractor;
+
+},{"../util/RdfUtil":33,"./MetadataExtractor":15,"assert":3,"uritemplate":52}],14:[function(require,module,exports){
+/*! @license ©2014 Ruben Verborgh - Multimedia Lab / iMinds / Ghent University */
+/* A CountExtractor extracts count metadata from a triple stream. */
+
+var MetadataExtractor = require('./MetadataExtractor'),
+    rdf = require('../util/RdfUtil');
+
+var DEFAULT_COUNT_PREDICATES = toHash([rdf.VOID_TRIPLES, rdf.HYDRA_TOTALITEMS]);
+
+/**
+ * Creates a new `CountExtractor`.
+ * @classdesc A `CountExtractor` extracts count metadata from a triple stream.
+ * @param {object} options
+ * @param {string[]} [options.request=void:triples and hydra:totalItems] The count predicates to look for.
+ * @constructor
+ * @augments MetadataExtractor
+ */
+function CountExtractor(options) {
+  if (!(this instanceof CountExtractor))
+    return new CountExtractor(options);
+  MetadataExtractor.call(this);
+  this._countPredicates = toHash(options && options.countPredicates) || DEFAULT_COUNT_PREDICATES;
+}
+MetadataExtractor.inherits(CountExtractor);
+
+/* Extracts metadata from the stream of triples. */
+CountExtractor.prototype._extract = function (metadata, tripleStream, callback) {
+  var countPredicates = this._countPredicates;
+  tripleStream.on('end', sendMetadata);
+  tripleStream.on('data', extractCount);
+
+  // Tries to extract count information from the triple
+  function extractCount(triple) {
+    if (triple.predicate in countPredicates && triple.subject === metadata.fragmentUrl) {
+      var count = triple.object.match(/\d+/);
+      count && sendMetadata({ totalTriples: parseInt(count[0], 10) });
+    }
+  }
+  // Sends the metadata through the callback and disables further extraction
+  function sendMetadata(metadata) {
+    tripleStream.removeListener('end', sendMetadata);
+    tripleStream.removeListener('data', extractCount);
+    callback(null, metadata || {});
+  }
+};
+
+/**
+ * Converts an array into an object with its values as keys.
+ * @param {Array} array The keys for the object
+ * @returns {Object} An object with the array's values as keys
+ * @private
+ */
+function toHash(array) {
+  return array && array.reduce(function (hash, key) { return hash[key] = true, hash; }, Object.create(null));
+}
+
+module.exports = CountExtractor;
+
+},{"../util/RdfUtil":33,"./MetadataExtractor":15}],15:[function(require,module,exports){
+/*! @license ©2014 Ruben Verborgh - Multimedia Lab / iMinds / Ghent University */
+/* MetadataExtractor is a base class for objects that extract metadata from a triple stream. */
+
+var util = require('util');
+
+/**
+ * Creates a new `MetadataExtractor`.
+ * @classdesc A `MetadataExtractor` is a base class for metadata extractors.
+ * @constructor
+ */
+function MetadataExtractor() {
+  if (!(this instanceof MetadataExtractor))
+    return new MetadataExtractor();
+}
+/**
+ * Makes the specified class inherit from the current class.
+ * @param {child} child The class that will inherit from the current class.
+ */
+MetadataExtractor.inherits = function (child) {
+  util.inherits(child, this);
+  child.inherits = this.inherits;
+};
+
+/**
+ * Extracts metadata from the stream of triples.
+ * @param {?object} metadata Existing metadata about the triples.
+ * @param {String=} metadata.fragmentUrl URL of the fragment the triples belong to.
+ * @param {?Iterator} tripleStream The stream of triples to extract from.
+ * @param {?metadataCallback} callback The callback through which metadata will be sent.
+ */
+MetadataExtractor.prototype.extract = function (metadata, tripleStream, callback) {
+  if (!callback) return;
+  if (!tripleStream) return callback(null, {});
+  this._extract(metadata || {}, tripleStream, callback);
+};
+
+/**
+ * Extracts metadata from the stream of triples (with checked arguments).
+ * @param {object} metadata Existing metadata about the triples.
+ * @param {String=} metadata.fragmentUrl URL of the fragment the triples belong to.
+ * @param {Iterator} tripleStream The stream of triples to extract from.
+ * @param {metadataCallback} callback The callback through which metadata will be sent.
+ * @private
+ */
+MetadataExtractor.prototype._extract = function (metadata, tripleStream, callback) {
+  throw new Error('Not implemented');
+};
+
+/**
+ * Callback that returns metadata.
+ * @callback metadataCallback
+ * @param {?Error} error The error that occurred during metadata extraction.
+ * @param {object} metadata The metadata as an object.
+*/
+
+module.exports = MetadataExtractor;
+
+},{"util":10}],16:[function(require,module,exports){
 /*! @license ©2014 Ruben Verborgh - Multimedia Lab / iMinds / Ghent University */
 /* A DistinctIterator emits the unique items from a source. */
 
 var FilterIterator = require('./FilterIterator'),
-    isEqual = require('lodash').isEqual;
+    crypto = require('crypto');
 
 // Creates a new DistinctIterator with the given filter
 function DistinctIterator(source, options) {
   if (!(this instanceof DistinctIterator))
     return new DistinctIterator(source, options);
-  FilterIterator.call(this, source, options);
-
-  // The `window` parameter indicates how much items to keep for uniqueness testing
-  var window = options && options.window;
-  this._windowLength = isFinite(window) && window > 0 ? ~~window : Infinity;
-  this._uniques = [];
+  FilterIterator.call(this, source, null, options);
+  this._uniques = {};
 }
 FilterIterator.inherits(DistinctIterator);
 
 // Filters distinct items from the source
 DistinctIterator.prototype._filter = function (item) {
-  // Reject the item if it is already in the list of uniques
-  var uniques = this._uniques, length = uniques.length, i = length;
-  while (i !== 0)
-    if (isEqual(item, uniques[--i]))
-      return false;
-  // Shorten the list of uniques if we reach the window length
-  (length === this._windowLength) && uniques.shift();
-  // Add the item to the list of uniques
-  return uniques.push(item);
+  // An item is considered unique if its hash has not occurred before
+  var uniques = this._uniques, itemHash = createHash(item);
+  if (!(itemHash in uniques)) {
+    uniques[itemHash] = true;
+    this._push(item);
+  }
 };
+
+// Creates a unique hash for the given object
+function createHash(object) {
+  var hash = crypto.createHash('sha1');
+  hash.update(JSON.stringify(object));
+  return hash.digest('base64');
+}
 
 module.exports = DistinctIterator;
 
-},{"./FilterIterator":12,"lodash":31}],12:[function(require,module,exports){
+},{"./FilterIterator":17,"crypto":35}],17:[function(require,module,exports){
 /*! @license ©2014 Ruben Verborgh - Multimedia Lab / iMinds / Ghent University */
 /* A FilterIterator filters the results of another iterator. */
 
@@ -1697,7 +1964,7 @@ FilterIterator.prototype._filter = function (item) {
 
 module.exports = FilterIterator;
 
-},{"./Iterator":13}],13:[function(require,module,exports){
+},{"./Iterator":18}],18:[function(require,module,exports){
 /*! @license ©2014 Ruben Verborgh - Multimedia Lab / iMinds / Ghent University */
 /* An iterator allows fast pull-based access to a stream of items. */
 
@@ -1733,20 +2000,22 @@ function Iterator(options) {
     if (event === 'data') {
       var self = this;
       this.removeListener('newListener', waitForDataListener);
-      function readNext() {
+      function readAll() {
         // Try to read an item while there are still data listeners
         var item;
         while (EventEmitter.listenerCount(self, 'data') !== 0 &&
                (item = self.read()) !== null)
           self.emit('data', item);
-        // If there are still data listeners, wait for new items to arrive
-        if (EventEmitter.listenerCount(self, 'data') !== 0)
-          self.once('readable', readNext);
-        // Otherwise, wait for new data listeners
-        else
+        // Detach the listener if nobody is listening anymore
+        if (EventEmitter.listenerCount(self, 'data') === 0) {
+          self.removeListener('readable', readAll);
+          self.removeListener('newListener', waitForDataListener); // A listener could already be attached
           self.addListener('newListener', waitForDataListener);
+        }
       }
-      setImmediate(readNext);
+      this.removeListener('readable', readAll); // A listener could already be attached
+      this.addListener('readable', readAll);
+      setImmediate(readAll);
     }
   });
 
@@ -1773,7 +2042,7 @@ Iterator.prototype.read = function () {
 Iterator.prototype.close = function () {
   if (!this._ended) {
     this.emit('close');
-    this._rejectAllListeners();
+    this._rejectDataListeners();
   }
 };
 
@@ -1821,7 +2090,7 @@ Iterator.prototype._fillBuffer = function () {
   // Emit the 'end' event if the iterator is empty
   if (this.ended) {
     this.emit('end');
-    this._rejectAllListeners();
+    this._rejectDataListeners();
   }
 };
 
@@ -1852,11 +2121,18 @@ Iterator.prototype._error = function (error) {
   }
 };
 
-// Removes all current and future listeners
-Iterator.prototype._rejectAllListeners = function () {
-  this.removeAllListeners();
-  this.addListener = noop;
+// Removes all current and future data listeners
+Iterator.prototype._rejectDataListeners = function () {
+  removeDataListeners.call(this);
+  this.removeListener('newListener', removeDataListeners);
+  this.on('newListener', removeDataListeners);
 };
+function removeDataListeners() {
+  this.removeAllListeners('data');
+  this.removeAllListeners('readable');
+  this.removeAllListeners('end');
+  this.removeAllListeners('error');
+}
 
 // Returns whether the iterator has no more items
 Object.defineProperty(Iterator.prototype, 'ended', {
@@ -1969,10 +2245,7 @@ Iterator.prototype.clone = function () {
     // Disable the buffered reading mechanism
     clone._read = noop;
     // Signal when new items are available
-    this.on('readable', function () {
-      if (readPosition === source._cache.length)
-        clone.emit('readable');
-    });
+    this.on('readable', function () { clone.emit('readable'); });
     // Signal when no more items will become available
     this.on('end', function () {
       if (readPosition === source._cache.length)
@@ -2029,7 +2302,7 @@ function WaitingIterator() {
   if (!(this instanceof WaitingIterator))
     return new WaitingIterator();
   Iterator.call(this);
-  this._rejectAllListeners();
+  this._rejectDataListeners();
 }
 Iterator.inherits(WaitingIterator);
 
@@ -2057,21 +2330,21 @@ Iterator.inherits(ArrayIterator);
 
 
 
-// Creates an iterator that bases its output on another iterator or stream
+// Creates an iterator that bases its output on another iterator or stream.
+// The source can be passed as an optional first argument, or set later through `setSource`.
 function TransformIterator(source, options) {
   if (!(this instanceof TransformIterator))
     return new TransformIterator(source, options);
+  // Shift the arguments if the optional `source` argument is not given
+  if (source && typeof source.on !== 'function') options = source, source = null;
   Iterator.call(this, options);
-
-  // A source value of `true` means the source will be set later
-  if (source !== true) {
-    // End if no iterator or stream was passed
-    if (!source || typeof(source.on) !== 'function')
-      return this._end();
-    this.setSource(source);
-  }
+  source && this.setSource(source);
 }
 Iterator.inherits(TransformIterator);
+
+// Keep track of the transformer's status
+var WAITING = 0, TRANSFORMING = 1, ENDING = 2;
+TransformIterator.prototype._transformStatus = WAITING;
 
 // Sets the iterator's source
 TransformIterator.prototype.setSource = function (source) {
@@ -2084,7 +2357,12 @@ TransformIterator.prototype.setSource = function (source) {
   if (!source.ended) {
     var self = this;
     source.on('error', function (error) { self._error(error); });
-    source.on('end', function () { self._flush(); });
+    source.on('end', function () {
+      // If not transforming, end immediately
+      if (self._transformStatus === WAITING) self._flush();
+      // Otherwise, end as soon as the transformation has finished
+      else self._transformStatus = ENDING;
+    });
     // When a readable listener is attached, wait for the source to become readable
     this.on('newListener', function waitForReadable(event) {
       if (event === 'readable') {
@@ -2105,19 +2383,25 @@ TransformIterator.prototype._source = WaitingIterator();
 
 // Reads data by calling `_transform`
 TransformIterator.prototype._read = function () {
-  // Only read if we're not already transforming
-  if (!this._transforming) {
+  switch (this._transformStatus) {
+  // Read if we're not already transforming
+  case WAITING:
     var item = this._source.read();
     if (item !== null) {
       var self = this;
-      this._transforming = true;
-      this._transform(item, function done() {
-        if (self) {
-          self._transforming = false;
-          self.emit('readable', self = null);
-        }
+      this._transformStatus = TRANSFORMING;
+      this._transform(item, function () {
+        if (self._transformStatus === TRANSFORMING)
+          self._transformStatus = WAITING;
+        self.emit('readable', self);
       });
     }
+    break;
+  // End the iterator if the source has ended
+  case ENDING:
+    this._transformStatus = WAITING;
+    this._flush();
+    break;
   }
 };
 
@@ -2174,6 +2458,19 @@ PassthroughIterator.prototype.toString = function () {
 
 
 
+// Creates a push-only iterator with an in-memory buffer
+function BufferIterator() {
+  if (!(this instanceof BufferIterator))
+    return new BufferIterator();
+  Iterator.call(this);
+}
+Iterator.inherits(BufferIterator);
+
+// Don't actively read; wait for _push calls
+BufferIterator.prototype._read = noop;
+
+
+
 
 /*             EXPORTS              */
 
@@ -2182,13 +2479,14 @@ module.exports = Iterator;
 Iterator.Iterator = Iterator;
 Iterator.EmptyIterator = Iterator.empty = EmptyIterator;
 Iterator.SingleIterator = Iterator.single = SingleIterator;
-Iterator.WaitingIterator = WaitingIterator;
+Iterator.WaitingIterator = Iterator.waiting = WaitingIterator;
 Iterator.ArrayIterator = Iterator.fromArray = ArrayIterator;
 Iterator.TransformIterator = Iterator.transform = TransformIterator;
 Iterator.StreamIterator = Iterator.fromStream = PassthroughIterator;
 Iterator.PassthroughIterator = Iterator.passthrough = PassthroughIterator;
+Iterator.BufferIterator = Iterator.buffered = BufferIterator;
 
-},{"events":4,"util":9}],14:[function(require,module,exports){
+},{"events":5,"util":10}],19:[function(require,module,exports){
 /*! @license ©2014 Ruben Verborgh - Multimedia Lab / iMinds / Ghent University */
 /* A LimitIterator emits a given number of items from a source. */
 
@@ -2197,7 +2495,7 @@ var TransformIterator = require('./Iterator').TransformIterator;
 // Creates a new LimitIterator with the given offset and limit
 function LimitIterator(source, offset, limit, options) {
   if (!(this instanceof LimitIterator))
-    return new LimitIterator(source, options);
+    return new LimitIterator(source, offset, limit, options);
   TransformIterator.call(this, source, options);
 
   this._offset = offset = isFinite(offset) ? Math.max(~~offset, 0) : 0;
@@ -2209,28 +2507,29 @@ TransformIterator.inherits(LimitIterator);
 // Reads `limit` items after skipping `offset` items
 LimitIterator.prototype._read = function () {
   // Read only if the limit has not been reached yet
-  if (!this._transforming && this._limit !== 0) {
+  if (!this._reading && this._limit !== 0) {
     var source = this._source, item;
     if (source) {
-      this._transforming = true;
+      this._reading = true;
       // Skip items until the desired offset is reached
       while (this._offset !== 0) {
-        if ((item = source.read()) === null) return;
+        if ((item = source.read()) === null)
+          return this._reading = false;
         this._offset--;
       }
       // Read the next item (careful: a recursive invocation)
       if ((item = source.read()) !== null) {
-        if (this._maxBufferSize > -1) this._push(item); // TODO: eliminate end check
+        if (this._maxBufferSize > -1) this._push(item); // TODO: eliminate and check
         if (--this._limit <= 0) this._end();
       }
-      this._transforming = false;
+      this._reading = false;
     }
   }
 };
 
 module.exports = LimitIterator;
 
-},{"./Iterator":13}],15:[function(require,module,exports){
+},{"./Iterator":18}],20:[function(require,module,exports){
 /*! @license ©2014 Ruben Verborgh - Multimedia Lab / iMinds / Ghent University */
 /* A MultiTransformIterator transforms items of a source into zero, one, or multiple items.
     To this end, it creates a new transforming iterator for each item it reads from the source. */
@@ -2256,18 +2555,27 @@ function MultiTransformIterator(source, options) {
 }
 TransformIterator.inherits(MultiTransformIterator);
 
+// Keep track of the transformer's status
+var WAITING = 0, TRANSFORMING = 1, ENDING = 2;
+
 // Reads an item from the next readable transformer,
 // creating transformers for new items as necessary
 MultiTransformIterator.prototype._read = function () {
   var item, transformer, transformerQueue = this._transformerQueue, optional = this._optional;
+
+  // Disallow recursive transformations
+  if (this._transformStatus !== WAITING) return;
+  this._transformStatus = TRANSFORMING;
 
   // Find the first readable transformer by dequeuing ended transformers
   while ((transformer = transformerQueue[0]) && transformer.ended) {
     transformerQueue.shift();
     // If transforming is optional and the transformer was empty, read the original item
     if (optional) {
-      if (!this._itemTransformed)
-        return this._push(transformer.item);
+      if (!this._itemTransformed) {
+        this._push(transformer.item);
+        return this._transformStatus = WAITING;
+      }
       this._itemTransformed = false;
     }
   }
@@ -2287,12 +2595,18 @@ MultiTransformIterator.prototype._read = function () {
           transformer.on('end',      this._fillBufferBound);
         }
         // If transforming is optional and the transformer is empty, read the original item
-        else if (optional) return this._push(item);
+        else if (optional) {
+          this._push(item);
+          return this._transformStatus = WAITING;
+        }
       }
     } while (item && transformerQueue.length < this._maxBufferSize);
     // If no fragments are left, this iterator has ended
-    if (!(transformer = transformerQueue[0]))
-      return this._source.ended && this._end();
+    if (!(transformer = transformerQueue[0])) {
+      if (this._source.ended)
+        this._end();
+      return this._transformStatus = WAITING;
+    }
   }
 
   // Read an item from the first readable transformer
@@ -2301,6 +2615,7 @@ MultiTransformIterator.prototype._read = function () {
     optional && (this._itemTransformed = true);
     this._push(item);
   }
+  this._transformStatus = WAITING;
 };
 
 // Creates a transforming iterator for the given item.
@@ -2322,7 +2637,7 @@ MultiTransformIterator.prototype._flush = function () {
 
 module.exports = MultiTransformIterator;
 
-},{"./Iterator":13}],16:[function(require,module,exports){
+},{"./Iterator":18}],21:[function(require,module,exports){
 /*! @license ©2014 Ruben Verborgh - Multimedia Lab / iMinds / Ghent University */
 /* A SortIterator emits the items of a source in a sorted way. */
 
@@ -2383,43 +2698,7 @@ function defaultSort(a, b) {
 
 module.exports = SortIterator;
 
-},{"./Iterator":13}],17:[function(require,module,exports){
-/*! @license ©2014 Ruben Verborgh - Multimedia Lab / iMinds / Ghent University */
-/* An TriplesIterator converts Turtle into triples. */
-
-var TransformIterator = require('./Iterator').TransformIterator,
-    N3 = require('n3');
-
-// Creates an iterator from an array
-function TriplesIterator(turtleIterator, options) {
-  if (!(this instanceof TriplesIterator))
-    return new TriplesIterator(turtleIterator);
-  TransformIterator.call(this, turtleIterator);
-
-  // Capture the output from the N3 parser
-  var self = this, parser = this._parser = new N3.Parser(options);
-  parser.parse(function (error, triple) {
-    triple && self._push(triple) ||
-    error  && self.emit('error', error);
-  });
-}
-TransformIterator.inherits(TriplesIterator);
-
-// Sends a chunk of Turtle to the N3 parser
-TriplesIterator.prototype._transform = function (chunk, done) {
-  this._parser.addChunk(chunk);
-  done();
-};
-
-// Ends the N3 parser
-TriplesIterator.prototype._flush = function () {
-  this._parser.end();
-  this._end();
-};
-
-module.exports = TriplesIterator;
-
-},{"./Iterator":13,"n3":33}],18:[function(require,module,exports){
+},{"./Iterator":18}],22:[function(require,module,exports){
 /*! @license ©2014 Ruben Verborgh - Multimedia Lab / iMinds / Ghent University */
 /* A UnionIterator returns the results from a set of source iterators. */
 
@@ -2453,11 +2732,15 @@ function UnionIterator(sources, options) {
   }
   // If there are no readable sources, end the iterator
   (this._sources.length === 0) && this._end();
+  this._reading = false;
 }
 Iterator.inherits(UnionIterator);
 
 // Reads items from the sources in a round-robin way
 UnionIterator.prototype._read = function () {
+  if (this._reading) return;
+  this._reading = true;
+
   var item = null, sources = this._sources, attempts = sources.length;
   // While no item has been found, attempt to read all sources once
   while (!item && attempts--) {
@@ -2471,11 +2754,12 @@ UnionIterator.prototype._read = function () {
   (item !== null) && this._push(item);
   // End the iterator if no readable sources are left
   (this._sources.length === 0) && this._end();
+  this._reading = false;
 };
 
 module.exports = UnionIterator;
 
-},{"./Iterator":13}],19:[function(require,module,exports){
+},{"./Iterator":18}],23:[function(require,module,exports){
 /*! @license ©2014 Ruben Verborgh - Multimedia Lab / iMinds / Ghent University */
 /* A FragmentsClient fetches Triple Pattern Fragments through HTTP. */
 
@@ -2483,27 +2767,50 @@ var HttpClient = require('../util/HttpClient'),
     Iterator = require('../iterators/Iterator'),
     rdf = require('../util/RdfUtil'),
     Cache = require('lru-cache'),
+    CompositeExtractor = require('../extractors/CompositeExtractor'),
+    CountExtractor = require('../extractors/CountExtractor'),
+    ControlsExtractor = require('../extractors/ControlsExtractor'),
     _ = require('lodash');
 
+// Prefer quad-based serialization formats (which allow a strict data/metadata separation),
+// and prefer less verbose formats. Also, N3 support is only partial.
+var DEFAULT_ACCEPT = 'application/trig;q=1.0,application/n-quads;q=0.7,' +
+                     'text/turtle;q=0.6,application/n-triples;q=0.3,text/n3;q=0.2';
 var parserTypes = [
-  require('./TurtleFragmentParser'),
+  require('./TrigFragmentIterator'),
+  require('./TurtleFragmentIterator'),
 ];
-var accept = 'text/turtle;q=1.0,application/n-triples;q=0.7,text/n3,q=0.6';
 
 // Creates a new FragmentsClient
 function FragmentsClient(startFragment, options) {
   if (!(this instanceof FragmentsClient))
     return new FragmentsClient(startFragment, options);
 
-  options = _.defaults(options || {}, { contentType: accept });
+  // Set HTTP and cache options
+  options = _.defaults(options || {}, { contentType: DEFAULT_ACCEPT });
   this._cache = new Cache({ max: 100 });
-  this._client = options.httpClient || new HttpClient(options);
-  if (typeof startFragment !== 'string') {
+  this._httpClient = options.httpClient || new HttpClient(options);
+
+  // Extract counts and triple pattern fragments controls by default
+  this._metadataExtractor = options.metadataExtractor || new CompositeExtractor({
+    metadata: [ new CountExtractor() ],
+    controls: [ new ControlsExtractor() ],
+  });
+
+  if (startFragment) {
+    // Fetch the start fragment if necessary
+    if (typeof startFragment === 'string') {
+      var startFragmentUrl = this._startFragmentUrl = startFragment;
+      startFragment = new Fragment(this);
+      startFragment.loadFromUrl(startFragmentUrl);
+    }
     this._startFragment = startFragment;
-  }
-  else {
-    this._startFragmentUrl = startFragment;
-    (this._startFragment = new Fragment(this._client)).loadFromUrl(startFragment);
+    startFragment.setMaxListeners(100); // several error listeners might be attached temporarily
+    startFragment.once('error', function (error) { startFragment.error = error; });
+    startFragment.getProperty('controls', function () {
+      startFragment.error = null;
+      startFragment.removeAllListeners('error');
+    });
   }
 }
 
@@ -2513,10 +2820,20 @@ FragmentsClient.prototype.getFragmentByPattern = function (pattern) {
   var cache = this._cache, key = JSON.stringify(pattern);
   if (cache.has(key))
     return cache.get(key).clone();
-
   // Create a dummy iterator until the fragment is loaded
-  var fragment = new Fragment(this._client, this._startFragmentUrl);
-  this._startFragment.getProperty('controls', function (controls) {
+  var fragment = new Fragment(this);
+
+  // Ensure the start fragment is loaded correctly
+  var startFragment = this._startFragment;
+  if (startFragment.error !== null) {
+    if (startFragment.error)
+      return setImmediate(startFragmentError), fragment;
+    startFragment.once('error', startFragmentError);
+  }
+  function startFragmentError() { fragment.emit('error', startFragment.error); fragment._end(); }
+
+  // Retrieve the fragment using the start fragment's controls
+  startFragment.getProperty('controls', function (controls) {
     // Replace all variables and blanks in the pattern by `null`
     var subject   = rdf.isVariableOrBlank(pattern.subject)   ? null : pattern.subject;
     var predicate = rdf.isVariableOrBlank(pattern.predicate) ? null : pattern.predicate;
@@ -2534,13 +2851,12 @@ FragmentsClient.prototype.getFragmentByPattern = function (pattern) {
 };
 
 // Creates a new Triple Pattern Fragment
-function Fragment(httpClient, startFragmentUrl) {
+function Fragment(fragmentsClient) {
   if (!(this instanceof Fragment))
-    return new Fragment(httpClient, startFragmentUrl);
+    return new Fragment(fragmentsClient);
   Iterator.call(this);
 
-  this._client = httpClient;
-  this._startFragmentUrl = startFragmentUrl;
+  this._fragmentsClient = fragmentsClient;
 }
 Iterator.inherits(Fragment);
 
@@ -2554,74 +2870,69 @@ Fragment.prototype._read = function () {
 
 // Loads the Triple Pattern Fragment located at the given URL
 Fragment.prototype.loadFromUrl = function (pageUrl) {
-  // Fetch the page of the fragment
-  var headers = { 'user-agent': 'Triple Pattern Fragments Client' };
-  if (this._startFragmentUrl) headers.referer = this._startFragmentUrl;
-  var fragmentPage = this._client.get(pageUrl, headers), self = this;
-  // Don't parse the fragment if its retrieval was unsuccessful
+  // Fetch a page of the fragment
+  var self = this, fragmentsClient = this._fragmentsClient, fragmentPage,
+      headers = { 'user-agent': 'Triple Pattern Fragments Client' };
+  if (fragmentsClient._startFragmentUrl) headers.referer = fragmentsClient._startFragmentUrl;
+  fragmentPage = fragmentsClient._httpClient.get(pageUrl, headers);
+  fragmentPage.on('error', function (error) { self.emit('error', error); });
+
   fragmentPage.getProperty('statusCode', function (statusCode) {
-    if (statusCode !== 200)
-      fragmentPage.emit('error', new Error('Status code: ' + statusCode));
-  });
-  // When the content type is known, find a compatible parser
-  fragmentPage.getProperty('contentType', function (contentType) {
-    var hasParser = parserTypes.some(function (Parser) {
-      if (Parser.supportsContentType(contentType)) {
-        // Parse the fetched page of the fragment
-        var parsedPage = self._fragmentPage = new Parser(fragmentPage, pageUrl);
-        parsedPage.on('readable', function () { self.emit('readable'); });
+    // Don't parse the page if its retrieval was unsuccessful
+    if (statusCode !== 200) {
+      fragmentPage.emit('error', new Error('Could not retrieve ' + pageUrl +
+                                           ' (' + statusCode + ')'));
+      return self._end();
+    }
 
-        // When the page ends, try to load the next page
-        parsedPage.on('end', function () {
-          // Find the next page's URL through hypermedia controls in the current page
-          var controls = parsedPage.getProperty('controls'), nextPage;
-          try { nextPage = controls && controls.nextPage; }
-          catch (controlError) {}
-          // If no next page is found, this fragment has ended
-          if (!nextPage) return self._end();
-          // Otherwise, load the next page
-          self.loadFromUrl(nextPage);
+    // Obtain the page's data, metadata, and controls
+    fragmentPage.getProperty('contentType', function (contentType) {
+      // Parse the page using the appropriate parser for the content type
+      var Parser = _.find(parserTypes, function (P) { return P.supportsContentType(contentType); });
+      if (!Parser)
+        return self.emit('error', new Error('No parser for ' + contentType + ' at ' + pageUrl));
+      var parsedPage = self._fragmentPage = new Parser(fragmentPage, pageUrl);
+      parsedPage.on('readable', function () { self.emit('readable'); });
+
+      // Extract the page's metadata and controls
+      var controls = {};
+      fragmentsClient._metadataExtractor.extract({ fragmentUrl: pageUrl },
+        parsedPage.metadataStream, function (error, metadata) {
+          // Emit all new properties
+          for (var type in metadata)
+            if (!self.getProperty(type))
+              self.setProperty(type, metadata[type]);
+          // Store the controls so we can find the next page
+          controls = metadata.controls || controls;
         });
-        // Pass errors to the page
-        parsedPage.on('error', function (error) { fragmentPage.emit('error', error); });
 
-        // Pass the metadata and controls of the page to the fragment
-        if (!self.getProperty('metadata'))
-          parsedPage.getProperty('metadata', self.setProperty.bind(self, 'metadata'));
-        if (!self.getProperty('controls'))
-          parsedPage.getProperty('controls', self.setProperty.bind(self, 'controls'));
-
-        // A new page of data has been loaded, so this fragment is readable again
-        return self.emit('readable'), true;
+      // Load the next page when this one is finished, using setImmediate to wait for controls
+      parsedPage.on('end', function () { setImmediate(loadNextPage); });
+      function loadNextPage() {
+        // Find the next page's URL through hypermedia controls in the current page
+        var nextPage;
+        try { nextPage = controls && controls.nextPage; } catch (controlError) {}
+        // Load the next page, or end if none was found
+        nextPage ? self.loadFromUrl(nextPage) : self._end();
       }
+      parsedPage.on('error', function (error) { fragmentPage.emit('error', error); });
+
+      // A new page of data has been loaded, so this fragment is readable again
+      self.emit('readable');
     });
-    if (!hasParser)
-      self.emit('error', new Error('No parser for ' + contentType + ' at ' + pageUrl));
-  });
-  // If an error occurs, assume the fragment page is empty
-  fragmentPage.on('error', function () {
-    fragmentPage.close();
-    self.empty();
   });
 };
 
 // Empties the fragment and returns it
 Fragment.prototype.empty = function () {
-  return this.single(null);
-};
-
-// Adds one single triple to the fragment and returns it
-Fragment.prototype.single = function (triple) {
   if (!this.getProperty('metadata'))
-    this.setProperty('metadata', { totalTriples: triple ? 1 : 0 });
-  triple && this._push(triple);
-  this._end();
-  return this;
+    this.setProperty('metadata', { totalTriples: 0 });
+  return this._end(), this;
 };
 
 module.exports = FragmentsClient;
 
-},{"../iterators/Iterator":13,"../util/HttpClient":25,"../util/RdfUtil":27,"./TurtleFragmentParser":23,"lodash":31,"lru-cache":32}],20:[function(require,module,exports){
+},{"../extractors/CompositeExtractor":12,"../extractors/ControlsExtractor":13,"../extractors/CountExtractor":14,"../iterators/Iterator":18,"../util/HttpClient":31,"../util/RdfUtil":33,"./TrigFragmentIterator":26,"./TurtleFragmentIterator":28,"lodash":38,"lru-cache":39}],24:[function(require,module,exports){
 /*! @license ©2014 Ruben Verborgh - Multimedia Lab / iMinds / Ghent University */
 /* A ReorderingGraphPatternIterator builds bindings by reading matches for a basic graph pattern. */
 
@@ -2660,16 +2971,16 @@ ReorderingGraphPatternIterator.prototype._createTransformer = function (bindings
         var distinctVariableCount = _.union.apply(_, patterns.map(rdf.getVariables)).length;
         return -(boundPattern.length * distinctVariableCount + patterns.length);
       }),
-      subPattern = subPatterns.pop(), pipeline;
+      subPattern = subPatterns.pop(), remainingPatterns = subPattern.length, pipeline;
 
   // If this subpattern has only one triple pattern, use it to create the pipeline
-  if (subPattern.length === 1)
+  if (remainingPatterns === 1)
     return createPipeline(subPattern.pop());
 
   // Otherwise, we must first find the best triple pattern to start the pipeline
   pipeline = new Iterator.PassthroughIterator(true);
   // Retrieve and inspect the triple patterns' metadata to decide which has least matches
-  var bestIndex = 0, minMatches = Infinity, patternsChecked = 0;
+  var bestIndex = 0, minMatches = Infinity;
   subPattern.forEach(function (triplePattern, index) {
     var fragment = this._client.getFragmentByPattern(triplePattern);
     fragment.getProperty('metadata', function (metadata) {
@@ -2683,9 +2994,15 @@ ReorderingGraphPatternIterator.prototype._createTransformer = function (bindings
       if (metadata.totalTriples < minMatches)
         bestIndex = index, minMatches = metadata.totalTriples;
       // After all patterns were checked, create the pipeline from the best pattern
-      if (++patternsChecked === subPattern.length)
+      if (--remainingPatterns === 0)
         pipeline.setSource(createPipeline(subPattern.splice(bestIndex, 1)[0]));
     }, this);
+    // If the fragment errors, pretend it was empty
+    fragment.on('error', function (error) {
+      Logger.warning(error.message);
+      if (!fragment.getProperty('metadata'))
+        fragment.setProperty('metadata', { totalTriples: 0 });
+    });
   }, this);
   return pipeline;
 
@@ -2716,7 +3033,7 @@ ReorderingGraphPatternIterator.prototype.toString = function () {
 
 module.exports = ReorderingGraphPatternIterator;
 
-},{"../iterators/Iterator":13,"../iterators/MultiTransformIterator":15,"../util/ExecutionLogger":24,"../util/RdfUtil":27,"./TriplePatternIterator":22,"lodash":31}],21:[function(require,module,exports){
+},{"../iterators/Iterator":18,"../iterators/MultiTransformIterator":20,"../util/ExecutionLogger":30,"../util/RdfUtil":33,"./TriplePatternIterator":27,"lodash":38}],25:[function(require,module,exports){
 /*! @license ©2014 Ruben Verborgh - Multimedia Lab / iMinds / Ghent University */
 /* An SparqlIterator returns the results of a SPARQL query. */
 
@@ -2732,7 +3049,8 @@ var SparqlParser = require('sparqljs').Parser,
     SparqlExpressionEvaluator = require('../util/SparqlExpressionEvaluator'),
     _ = require('lodash'),
     util = require('util'),
-    rdf = require('../util/RdfUtil');
+    rdf = require('../util/RdfUtil'),
+    createErrorType = require('../util/CustomError');
 
 // Creates an iterator from a SPARQL query
 function SparqlIterator(source, queryText, options) {
@@ -2852,14 +3170,12 @@ SparqlConstructIterator.prototype._transform = function (bindings, done) {
 
 // Creates an iterator for a parsed SPARQL DESCRIBE query
 function SparqlDescribeIterator(source, query, options) {
-  SparqlConstructIterator.call(this, source, query, options);
-
   // Create a template with `?var ?p ?o` patterns for each variable
-  var variables = query.variables, template = this._template = [];
+  var variables = query.variables, template = query.template = [];
   for (var i = 0, l = variables.length; i < l; i++)
     template.push(rdf.triple(variables[i], '?__predicate' + i, '?__object' + i));
-  // Add the template to this query's patterns
-  this.patterns = query.where.concat({ type: 'bgp', triples: template });
+  query.where = query.where.concat({ type: 'bgp', triples: template });
+  SparqlConstructIterator.call(this, source, query, options);
 }
 SparqlConstructIterator.inherits(SparqlDescribeIterator);
 
@@ -2892,7 +3208,7 @@ function SparqlGroupsIterator(source, groups, options) {
     return new SparqlGroupIterator(source, group, options);
   }, source);
 }
-Iterator.inherits(SparqlGroupIterator);
+Iterator.inherits(SparqlGroupsIterator);
 
 
 
@@ -2905,15 +3221,17 @@ function SparqlGroupIterator(source, group, options) {
   switch (group.type) {
   case 'bgp':
     return new ReorderingGraphPatternIterator(source, group.triples, options);
+  case 'group':
+    return new SparqlGroupsIterator(source, group.patterns, childOptions);
   case 'optional':
-    options = _.create(options, { optional: true });
-    return new SparqlGroupsIterator(source, group.patterns, options);
+    childOptions = _.create(options, { optional: true });
+    return new SparqlGroupsIterator(source, group.patterns, childOptions);
   case 'union':
     return new UnionIterator(group.patterns.map(function (patternToken) {
       return new SparqlGroupIterator(source.clone(), patternToken, childOptions);
     }), options);
   case 'filter':
-    // An set of bindings matches the filter if it doesn't evaluate to 0 or false
+    // A set of bindings matches the filter if it doesn't evaluate to 0 or false
     var evaluate = SparqlExpressionEvaluator(group.expression);
     return new FilterIterator(source, function (bindings) {
       return !/^"false"|^"0"/.test(evaluate(bindings));
@@ -2925,32 +3243,50 @@ function SparqlGroupIterator(source, group, options) {
 Iterator.inherits(SparqlGroupIterator);
 
 
-
 // Error thrown when the query has a syntax error
-function InvalidQueryError(query, cause) {
-  this.name = 'InvalidQueryError';
-  this.query = query;
-  this.cause = cause;
+var InvalidQueryError = createErrorType('InvalidQueryError', function (query, cause) {
   this.message = 'Syntax error in query\n' + cause.message;
-}
-util.inherits(InvalidQueryError, Error);
+});
 
 // Error thrown when no combination of iterators can solve the query
-function UnsupportedQueryError(query, cause) {
-  this.name = 'UnsupportedQueryError';
-  this.query = query;
-  this.cause = cause;
+var UnsupportedQueryError = createErrorType('UnsupportedQueryError', function (query, cause) {
   this.message = 'The query is not yet supported\n' + cause.message;
-}
-util.inherits(UnsupportedQueryError, Error);
-
+});
 
 
 module.exports = SparqlIterator;
 SparqlIterator.InvalidQueryError = InvalidQueryError;
 SparqlIterator.UnsupportedQueryError = UnsupportedQueryError;
 
-},{"../iterators/DistinctIterator":11,"../iterators/FilterIterator":12,"../iterators/Iterator":13,"../iterators/LimitIterator":14,"../iterators/SortIterator":16,"../iterators/UnionIterator":18,"../util/RdfUtil":27,"../util/SparqlExpressionEvaluator":28,"./ReorderingGraphPatternIterator":20,"lodash":31,"sparqljs":43,"util":9}],22:[function(require,module,exports){
+},{"../iterators/DistinctIterator":16,"../iterators/FilterIterator":17,"../iterators/Iterator":18,"../iterators/LimitIterator":19,"../iterators/SortIterator":21,"../iterators/UnionIterator":22,"../util/CustomError":29,"../util/RdfUtil":33,"../util/SparqlExpressionEvaluator":34,"./ReorderingGraphPatternIterator":24,"lodash":38,"sparqljs":51,"util":10}],26:[function(require,module,exports){
+/*! @license ©2013 Ruben Verborgh - Multimedia Lab / iMinds / Ghent University */
+/* A TrigFragmentIterator reads data and metadata from Linked Data Fragments in TriG. */
+
+var TurtleFragmentIterator = require('./TurtleFragmentIterator');
+
+// Creates a new TrigFragmentIterator
+function TrigFragmentIterator(source, fragmentUrl) {
+  if (!(this instanceof TrigFragmentIterator))
+    return new TrigFragmentIterator(source, fragmentUrl);
+  TurtleFragmentIterator.call(this, source, fragmentUrl);
+}
+TurtleFragmentIterator.inherits(TrigFragmentIterator);
+
+// Sends the given parsed quad to the data or metadata stream
+TrigFragmentIterator.prototype._processTriple = function (quad) {
+  // Quads with a non-default graph are considered metadata
+  if (!quad.graph) this._push(quad);
+  else this.metadataStream._push(quad);
+};
+
+// Indicates whether the class supports the content type
+TrigFragmentIterator.supportsContentType = function (contentType) {
+  return (/^application\/(?:trig|n-quads)$/).test(contentType);
+};
+
+module.exports = TrigFragmentIterator;
+
+},{"./TurtleFragmentIterator":28}],27:[function(require,module,exports){
 /*! @license ©2014 Ruben Verborgh - Multimedia Lab / iMinds / Ghent University */
 /* A TriplePatternIterator builds bindings by reading matches for a triple pattern. */
 
@@ -2977,6 +3313,7 @@ TriplePatternIterator.prototype._createTransformer = function (bindings, options
   // Retrieve the fragment that corresponds to the resulting pattern
   var fragment = this._client.getFragmentByPattern(boundPattern);
   Logger.logFragment(this, fragment, bindings);
+  fragment.on('error', function (error) { Logger.warning(error.message); });
   return fragment;
 };
 
@@ -3002,142 +3339,97 @@ TriplePatternIterator.prototype.toString = function () {
 
 module.exports = TriplePatternIterator;
 
-},{"../iterators/MultiTransformIterator":15,"../util/ExecutionLogger":24,"../util/RdfUtil":27}],23:[function(require,module,exports){
+},{"../iterators/MultiTransformIterator":20,"../util/ExecutionLogger":30,"../util/RdfUtil":33}],28:[function(require,module,exports){
 /*! @license ©2013 Ruben Verborgh - Multimedia Lab / iMinds / Ghent University */
-/* A TurtleFragmentParser parses Triple Pattern Fragment in Turtle. */
+/* A TurtleFragmentIterator reads data and metadata from Linked Data Fragments in Turtle. */
 
 var TransformIterator = require('../iterators/Iterator').TransformIterator,
-    TriplesIterator = require('../iterators/TriplesIterator'),
+    BufferIterator = require('../iterators/Iterator').BufferIterator,
     rdf = require('../util/RdfUtil'),
-    UriTemplate = require('uritemplate'),
-    assert = require('assert');
+    N3 = require('n3');
 
-// Extract these types of links from representations
-var linkTypes = ['firstPage', 'nextPage', 'previousPage', 'lastPage'];
+// Creates a new TurtleFragmentIterator
+function TurtleFragmentIterator(source, fragmentUrl) {
+  if (!(this instanceof TurtleFragmentIterator))
+    return new TurtleFragmentIterator(source, fragmentUrl);
+  TransformIterator.call(this, source);
 
-// Creates a new TurtleFragmentParser
-function TurtleFragmentParser(source, fragmentUrl) {
-  if (!(this instanceof TurtleFragmentParser))
-    return new TurtleFragmentParser(source, fragmentUrl);
-  TransformIterator.call(this, new TriplesIterator(source, { documentURI: fragmentUrl }));
-
-  this._fragmentUrl = fragmentUrl;
-  this._controlData = {};
-  // When a metadata or controls listener is added, drain the source to read it
-  this.on('newListener', function metadataListenerAdded(event) {
-    if (event === 'metadataSet' || event === 'controlsSet') {
+  // Expose an additional metadata stream
+  this.metadataStream = new BufferIterator();
+  if (source && source.ended) return this.metadataStream._push(null);
+  // When a metadata listener is added, drain the source to read metadata
+  this.metadataStream.on('newListener', function metadataListenerAdded(event) {
+    if (event === 'data' || event === 'end') {
       this.removeListener('newListener', metadataListenerAdded);
-      this._bufferAll();
+      self._bufferAll();
     }
   });
-}
-TransformIterator.inherits(TurtleFragmentParser);
 
-// Processes a triple from the Turtle parser
-TurtleFragmentParser.prototype._transform = function (triple, done) {
-  // Inspect metadata triples
-  if (!this.hasProperty('metadata')) {
-    // Parse total triple count
-    if (triple.predicate === rdf.VOID_TRIPLES &&
-        rdf.decodedURIEquals(this._fragmentUrl, triple.subject)) {
-      var totalTriples = parseInt(rdf.getLiteralValue(triple.object), 10);
-      this.setProperty('metadata', { totalTriples: totalTriples });
-    }
-  }
-  // Save control triples for control parsing
-  if (triple.predicate.indexOf(rdf.HYDRA) === 0) {
-    // Store data per property and per subject
-    var property = triple.predicate.substr(rdf.HYDRA.length),
-        propertyData = this._controlData[property] || (this._controlData[property] = {}),
-        subjectData = propertyData[triple.subject] || (propertyData[triple.subject] = []);
-    subjectData.push(triple.object);
-  }
-  // Pass on the triples
-  this._push(triple), done();
+  // Convert Turtle into triples using the N3 parser
+  var self = this;
+  this._parser = new N3.Parser({ documentURI: fragmentUrl });
+  this._parser.parse(function (error, triple) {
+    triple && self._push(self._processTriple(triple)) ||
+    error  && self.emit('error', error);
+  });
+  this._fragmentUrl = fragmentUrl;
+}
+TransformIterator.inherits(TurtleFragmentIterator);
+
+// Sends a chunk of Turtle to the N3 parser to convert it to triples
+TurtleFragmentIterator.prototype._transform = function (chunk, done) {
+  this._parser.addChunk(chunk), done();
 };
 
-// Sets the controls and ends
-TurtleFragmentParser.prototype._flush = function () {
-  this.setProperty('controls', this.parseControls(this._controlData));
-  delete this._controlTriples;
+// Sends the given parsed triple to the data or metadata stream
+TurtleFragmentIterator.prototype._processTriple = function (triple) {
+  // This separation between data and metadata/controls is an approximation;
+  // for a proper separation, use an RDF format with graph support (see TrigFragmentParser).
+  if (triple.subject !== this._fragmentUrl && triple.predicate.indexOf(rdf.HYDRA) !== 0)
+    this._push(triple);
+  else
+    this.metadataStream._push(triple);
+};
+
+// Closes the streams after the source has ended
+TurtleFragmentIterator.prototype._flush = function () {
+  // Ensure the parser processes possible pending triples
+  this._parser.end();
+  // Once all triples have been processed, end both streams
+  this.metadataStream._end();
   this._end();
 };
 
-// Parses the hypermedia controls inside the representation
-TurtleFragmentParser.prototype.parseControls = function (controlData) {
-  var controls = Object.create(defaultControls),
-      fragmentUrl = controls._fragmentUrl = this._fragmentUrl;
-
-  // Parse the links
-  linkTypes.forEach(function (property) {
-    var linkTargets = (controlData[property] || {})[fragmentUrl];
-    if (linkTargets && linkTargets.length > 0)
-      Object.defineProperty(controls, property, { value: linkTargets[0] });
-  });
-
-  // Parse the search form
-  // TODO: Make parser independent of a specifically structured control set
-  var searchForms = controlData.search;
-  if (searchForms) {
-    assert(Object.keys(searchForms).length === 1, 'Expected 1 hydra:search');
-    var searchForm = searchForms[Object.keys(searchForms)[0]][0],
-        searchTemplates = (controlData.template || {})[searchForm] || [];
-
-    // Parse the template
-    assert(searchTemplates.length === 1, 'Expected 1 hydra:template for ' + searchForm);
-    var searchTemplateValue = rdf.getLiteralValue(searchTemplates[0]),
-        searchTemplate = UriTemplate.parse(searchTemplateValue);
-
-    // Parse the template mappings
-    var mappings = (controlData.mapping || {})[searchForm] || [];
-    assert(mappings.length === 3, 'Expected 3 hydra:mappings for ' + searchForm);
-    mappings = mappings.reduce(function (mappings, mapping) {
-      var variable = ((controlData.variable || {})[mapping] || [])[0],
-          property = ((controlData.property || {})[mapping] || [])[0];
-      assert(variable, 'Expected a hydra:variable for ' + mapping);
-      assert(property, 'Expected a hydra:property for ' + mapping);
-      mappings[property] = rdf.getLiteralValue(variable);
-      return mappings;
-    }, {});
-
-    // Gets the URL of the Triple Pattern Fragment with the given triple pattern
-    controls.getFragmentUrl = function (triplePattern) {
-      var variables = {};
-      variables[mappings[rdf.RDF + 'subject']]   = triplePattern.subject;
-      variables[mappings[rdf.RDF + 'predicate']] = triplePattern.predicate;
-      variables[mappings[rdf.RDF + 'object']]    = triplePattern.object;
-      return searchTemplate.expand(variables);
-    };
-  }
-
-  return controls;
-};
-
 // Indicates whether the class supports the content type
-TurtleFragmentParser.supportsContentType = function (contentType) {
+TurtleFragmentIterator.supportsContentType = function (contentType) {
   return (/^(?:text\/turtle|text\/n3|application\/n-triples)$/).test(contentType);
 };
 
-// Default hypermedia controls for fragments
-var defaultControls = {
-  getFragmentUrl: function (triplePattern) {
-    throw new Error('The fragment ' + this._fragmentUrl +
-                    ' does not contain Triple Pattern Fragment hypermedia controls.');
-  },
-};
-linkTypes.forEach(function (property) {
-  Object.defineProperty(defaultControls, property, {
-    enumerable: true,
-    get: function () {
-      throw new Error('The fragment ' + this._fragmentUrl +
-                      ' does not contain controls for ' + property + '.');
-    },
-  });
-});
+module.exports = TurtleFragmentIterator;
 
-module.exports = TurtleFragmentParser;
+},{"../iterators/Iterator":18,"../util/RdfUtil":33,"n3":40}],29:[function(require,module,exports){
+/*! @license ©2014 Ruben Verborgh - Multimedia Lab / iMinds / Ghent University */
 
-},{"../iterators/Iterator":13,"../iterators/TriplesIterator":17,"../util/RdfUtil":27,"assert":3,"uritemplate":44}],24:[function(require,module,exports){
+// Creates a constructor for an Error with the given name
+function createErrorType(name, init) {
+  function E(message) {
+    this.name = name;
+    if (!Error.captureStackTrace)
+      this.stack = (new Error()).stack;
+    else
+      Error.captureStackTrace(this, this.constructor);
+    this.message = message;
+    init && init.apply(this, arguments);
+  }
+  E.prototype = new Error();
+  E.prototype.name = name;
+  E.prototype.constructor = E;
+  return E;
+}
+
+module.exports = createErrorType;
+
+},{}],30:[function(require,module,exports){
 /*! @license ©2013 Miel Vander Sande - Multimedia Lab / iMinds / Ghent University
  * */
 var Logger = require('./Logger'), util = require('util'), Iterator = require('../iterators/Iterator');
@@ -3178,13 +3470,16 @@ ExecutionLogger.index = 1;
 
 module.exports = ExecutionLogger;
 
-},{"../iterators/Iterator":13,"./Logger":26,"util":9}],25:[function(require,module,exports){
+},{"../iterators/Iterator":18,"./Logger":32,"util":10}],31:[function(require,module,exports){
 /*! @license ©2014 Ruben Verborgh - Multimedia Lab / iMinds / Ghent University */
 
 var Iterator = require('../iterators/Iterator'),
     request = require('request'),
     Logger = require('../util/Logger.js'),
+    zlib = require('zlib'),
     _ = require('lodash');
+
+var activeRequests = {}, requestId = 0;
 
 /**
  * Creates a new `HttpClient`.
@@ -3201,60 +3496,116 @@ function HttpClient(options) {
   options = options || {};
   this._request = options.request || request;
   this._contentType = options.contentType || '*/*';
+  this._queue = [];
+  this._activeRequests = 0;
+  this._maxActiveRequests = options.concurrentRequests || 20;
   this._logger = options.logger || Logger('HttpClient');
 }
 
 /**
  * Retrieves a representation of the resource with the given URL.
  * @param {string} url The URL of the resource
- * @param {Object} headers Additional HTTP headers to add
+ * @param {Object} [headers] Additional HTTP headers to add
+ * @param {Object} [options] Additional options for the HTTP request
  * @returns {Iterator} An iterator of the representation
  */
-HttpClient.prototype.get = function (url, headers) {
-  return this.request(url, 'GET', headers);
+HttpClient.prototype.get = function (url, headers, options) {
+  return this.request(url, 'GET', headers, options);
 };
 
 /**
  * Retrieves a representation of the resource with the given URL.
  * @param {string} url The URL of the resource
  * @param {string} [method='GET'] method The HTTP method to use
- * @param {Object} headers Additional HTTP headers to add
+ * @param {Object} [headers] Additional HTTP headers to add
+ * @param {Object} [options] Additional options for the HTTP request
  * @returns {Iterator} An iterator of the representation
  */
-HttpClient.prototype.request = function (url, method, headers) {
-  var responseIterator = new Iterator.PassthroughIterator(true), startTime = new Date(),
-      acceptHeaders = { accept: this._contentType };
-  this._logger.info('Retrieving', url);
-  this._request({
-    url: url,
-    method: method || 'GET',
-    headers: headers ? _.assign(acceptHeaders, headers) : acceptHeaders,
-    timeout: 5000,
-  })
-  .on('response', function (response) {
-    var responseTime = new Date() - startTime;
+HttpClient.prototype.request = function (url, method, headers, options) {
+  var responseIterator = new Iterator.PassthroughIterator(true), self = this;
 
-    // Redirect output to the iterator
-    response.setEncoding && response.setEncoding('utf8');
-    response.pause && response.pause();
-    responseIterator.setSource(response);
-    // Responses _must_ be entirely consumed,
-    // or they can lead to out-of-memory errors (http://nodejs.org/api/http.html)
-    responseIterator._bufferAll();
+  function performRequest() {
+    self._logger.info('Requesting', url);
+    self._activeRequests++;
 
-    // Emit the metadata
-    var contentType = (response.headers['content-type'] || '').replace(/\s*(?:;.*)?$/, '');
-    responseIterator.setProperty('statusCode', response.statusCode);
-    responseIterator.setProperty('contentType', contentType);
-    responseIterator.setProperty('responseTime', responseTime);
-  })
-  .on('error', function (error) { responseIterator._error(error); });
+    // Create the request
+    var acceptHeaders = { accept: self._contentType, 'accept-encoding': 'gzip,deflate' };
+    var requestOptions = {
+      url: url,
+      method: method || 'GET',
+      headers: headers ? _.assign(acceptHeaders, headers) : acceptHeaders,
+      timeout: 5000,
+      followRedirect: true,
+    }, request, startTime = new Date();
+    try { request = self._request(options ? _.assign(requestOptions, options) : requestOptions); }
+    catch (error) { return setImmediate(emitError, error), responseIterator; }
+    activeRequests[request._id = requestId++] = request;
+    function emitError(error) {
+      responseIterator._error(error);
+      delete activeRequests[request && request._id];
+    }
+
+    // React to a possible response
+    request.on('response', function (response) {
+      var statusCode = response.statusCode, headers = response.headers,
+          responseTime = new Date() - startTime, encoding, contentType, nextRequest;
+      // Start a possible queued request
+      delete activeRequests[request._id];
+      self._activeRequests--;
+      (nextRequest = self._queue.shift()) && nextRequest();
+
+      // Decompress the response when necessary
+      switch (encoding = headers['content-encoding'] || '') {
+      case 'gzip':
+        response.pipe(response = zlib.createGunzip());
+        break;
+      case 'deflate':
+        response.pipe(response = zlib.createInflate());
+        break;
+      case '':
+        break;
+      default:
+        return responseIterator._error(new Error('Unsupported encoding: ' + encoding));
+      }
+      response.on('error', emitError);
+
+      // Redirect output to the iterator
+      response.setEncoding && response.setEncoding('utf8');
+      response.pause && response.pause();
+      responseIterator.setSource(response);
+      // Responses _must_ be entirely consumed,
+      // or they can lead to out-of-memory errors (http://nodejs.org/api/http.html)
+      responseIterator._bufferAll();
+
+      // Emit the metadata
+      contentType = (headers['content-type'] || '').replace(/\s*(?:;.*)?$/, '');
+      responseIterator.setProperty('statusCode', statusCode);
+      responseIterator.setProperty('contentType', contentType);
+      responseIterator.setProperty('responseTime', responseTime);
+    })
+    .on('error', emitError);
+  }
+
+  // Start or enqueue the request
+  if (this._activeRequests < this._maxActiveRequests)
+    performRequest();
+  else
+    this._queue.push(performRequest);
+
   return responseIterator;
+};
+
+// Abort all active requests
+HttpClient.abortAll = function () {
+  for (var id in activeRequests) {
+    activeRequests[id].abort();
+    delete activeRequests[id];
+  }
 };
 
 module.exports = HttpClient;
 
-},{"../iterators/Iterator":13,"../util/Logger.js":26,"lodash":31,"request":29}],26:[function(require,module,exports){
+},{"../iterators/Iterator":18,"../util/Logger.js":32,"lodash":38,"request":36,"zlib":4}],32:[function(require,module,exports){
 /*! @license ©2013 Ruben Verborgh - Multimedia Lab / iMinds / Ghent University */
 /* Extended by Miel Vander Sande: loosely based on log.js
  * https://github.com/visionmedia/log.js/blob/master/lib/log.js */
@@ -3362,7 +3713,7 @@ Logger.setMode = function (modeName) {
 
 module.exports = Logger;
 
-},{"./RdfUtil":27,"lodash":31}],27:[function(require,module,exports){
+},{"./RdfUtil":33,"lodash":38}],33:[function(require,module,exports){
 /*! @license ©2014 Ruben Verborgh - Multimedia Lab / iMinds / Ghent University */
 var N3 = require('n3'),
     _ = require('lodash');
@@ -3575,7 +3926,7 @@ namespace('void', 'http://rdfs.org/ns/void#', [
 ]);
 
 namespace('hydra', 'http://www.w3.org/ns/hydra/core#', [
-  'search', 'template', 'mapping', 'property', 'variable',
+  'search', 'template', 'mapping', 'property', 'variable', 'totalItems',
 ]);
 
 namespace('foaf', 'http://xmlns.com/foaf/0.1/');
@@ -3593,10 +3944,12 @@ function namespace(prefix, base, names) {
 
 Object.freeze(util);
 
-},{"lodash":31,"n3":33}],28:[function(require,module,exports){
+},{"lodash":38,"n3":40}],34:[function(require,module,exports){
 /*! @license ©2014 Ruben Verborgh - Multimedia Lab / iMinds / Ghent University */
 
-var N3Util = require('n3').Util;
+var util = require('util'),
+    N3Util = require('n3').Util,
+    createErrorType = require('./CustomError');
 
 var XSD = 'http://www.w3.org/2001/XMLSchema#',
     XSD_INTEGER = XSD + 'integer',
@@ -3615,7 +3968,7 @@ function SparqlExpressionEvaluator(expression) {
   if (!expression) return noop;
   var expressionType = expression && expression.type || typeof expression,
       evaluator = evaluators[expressionType];
-  if (!evaluator) throw new Error('Unsupported expression type: ' + expressionType);
+  if (!evaluator) throw new UnsupportedExpressionError(expressionType);
   return evaluator(expression);
 }
 
@@ -3640,9 +3993,7 @@ var evaluators = {
     // Evaluate a variable to its value
     else
       return function (bindings) {
-        if (!bindings || !(expression in bindings))
-          throw new Error('Cannot evaluate variable ' + expression + ' because it is not bound.');
-        return bindings[expression];
+        return bindings && bindings[expression];
       };
   },
 
@@ -3651,11 +4002,9 @@ var evaluators = {
     // Find the operator and check the number of arguments matches the expression
     var operatorName = expression.operator, operator = operators[operatorName];
     if (!operator)
-      throw new Error('Unsupported operator: ' + operatorName.toUpperCase() + '.');
+      throw new UnsupportedOperatorError(operatorName);
     if (operator.length !== expression.args.length)
-      throw new Error('Invalid number of arguments for ' + operatorName.toUpperCase() +
-                      ': ' + expression.args.length +
-                      ' (expected: ' + operator.length + ').');
+      throw new InvalidArgumentsNumberError(operatorName, expression.args.length, operator.length);
 
     // Special case: some operators accept expressions instead of evaluated expressions
     if (operator.acceptsExpressions) {
@@ -3679,6 +4028,8 @@ var evaluators = {
             origArgs = new Array(argumentExpressions.length);
         for (var i = 0; i < argumentExpressions.length; i++) {
           var arg = args[i] = origArgs[i] = argumentExpressions[i](bindings);
+          // If any argument is undefined, the result is undefined
+          if (arg === undefined) return;
           // Convert the arguments if necessary
           switch (operator.type) {
           case 'numeric':
@@ -3781,9 +4132,154 @@ var operators = {
 // Tag all operators that take expressions instead of evaluated expressions
 operators.bound.acceptsExpressions = true;
 
-module.exports = SparqlExpressionEvaluator;
 
-},{"n3":33}],29:[function(require,module,exports){
+
+var UnsupportedExpressionError = createErrorType('UnsupportedExpressionError', function (expressionType) {
+  this.message = 'Unsupported expression type: ' + expressionType + '.';
+});
+
+var UnsupportedOperatorError = createErrorType('UnsupportedExpressionError', function (operatorName) {
+  this.message = 'Unsupported operator: ' + operatorName.toUpperCase() + '.';
+});
+
+var InvalidArgumentsNumberError = createErrorType('InvalidArgumentsNumberError',
+function (operatorName, actualNumber, expectedNumber) {
+  this.message = 'Invalid number of arguments for ' + operatorName.toUpperCase() + ': ' +
+                 actualNumber + ' (expected: ' + expectedNumber + ').';
+});
+
+
+
+module.exports = SparqlExpressionEvaluator;
+module.exports.UnsupportedExpressionError = UnsupportedExpressionError;
+module.exports.UnsupportedOperatorError = UnsupportedOperatorError;
+module.exports.InvalidArgumentsNumberError = InvalidArgumentsNumberError;
+
+},{"./CustomError":29,"n3":40,"util":10}],35:[function(require,module,exports){
+/*! @license ©2015 Ruben Verborgh - Multimedia Lab / iMinds / Ghent University */
+/** Browser replacement for a subset of crypto. */
+
+exports.createHash = function () {
+  var contents;
+  return {
+    update: function (c) { contents ? (contents += c) : (contents = c); },
+    digest: function ()  { return sha1(contents); },
+  };
+};
+
+/*! @license SHA-1 implementation ©2002-2014 Chris Veness / MIT Licence */
+
+/**
+ * Generates SHA-1 hash of string.
+ *
+ * @param   {string} msg - (Unicode) string to be hashed.
+ * @returns {string} Hash of msg as hex character string.
+ */
+function sha1(msg) {
+  // constants [§4.2.1]
+  var K = [ 0x5a827999, 0x6ed9eba1, 0x8f1bbcdc, 0xca62c1d6 ];
+
+  // PREPROCESSING
+
+  msg += String.fromCharCode(0x80);  // add trailing '1' bit (+ 0's padding) to string [§5.1.1]
+
+  // convert string msg into 512-bit/16-integer blocks arrays of ints [§5.2.1]
+  var l = msg.length / 4 + 2; // length (in 32-bit integers) of msg + ‘1’ + appended length
+  var N = Math.ceil(l / 16);  // number of 16-integer-blocks required to hold 'l' ints
+  var M = new Array(N);
+
+  for (var i = 0; i < N; i++) {
+    M[i] = new Array(16);
+    for (var j = 0; j < 16; j++) {  // encode 4 chars per integer, big-endian encoding
+      M[i][j] = (msg.charCodeAt(i * 64 + j * 4)     << 24) |
+                (msg.charCodeAt(i * 64 + j * 4 + 1) << 16) |
+                (msg.charCodeAt(i * 64 + j * 4 + 2) << 8)  |
+                (msg.charCodeAt(i * 64 + j * 4 + 3));
+    } // note running off the end of msg is ok 'cos bitwise ops on NaN return 0
+  }
+  // add length (in bits) into final pair of 32-bit integers (big-endian) [§5.1.1]
+  // note: most significant word would be (len-1)*8 >>> 32, but since JS converts
+  // bitwise-op args to 32 bits, we need to simulate this by arithmetic operators
+  M[N - 1][14] = ((msg.length - 1) * 8) / Math.pow(2, 32);
+  M[N - 1][14] = Math.floor(M[N - 1][14]);
+  M[N - 1][15] = ((msg.length - 1) * 8) & 0xffffffff;
+
+  // set initial hash value [§5.3.1]
+  var H0 = 0x67452301;
+  var H1 = 0xefcdab89;
+  var H2 = 0x98badcfe;
+  var H3 = 0x10325476;
+  var H4 = 0xc3d2e1f0;
+
+  // HASH COMPUTATION [§6.1.2]
+
+  var W = new Array(80), a, b, c, d, e, t;
+  for (i = 0; i < N; i++) {
+
+    // 1 - prepare message schedule 'W'
+    for (t = 0;  t < 16; t++) W[t] = M[i][t];
+    for (t = 16; t < 80; t++) W[t] = ROTL(W[t - 3] ^ W[t - 8] ^ W[t - 14] ^ W[t - 16], 1);
+
+    // 2 - initialise five working variables a, b, c, d, e with previous hash value
+    a = H0, b = H1, c = H2, d = H3, e = H4;
+
+    // 3 - main loop
+    for (t = 0; t < 80; t++) {
+      var s = Math.floor(t / 20); // seq for blocks of 'f' functions and 'K' constants
+      var T = (ROTL(a, 5) + f(s, b, c, d) + e + K[s] + W[t]) & 0xffffffff;
+      e = d;
+      d = c;
+      c = ROTL(b, 30);
+      b = a;
+      a = T;
+    }
+
+    // 4 - compute the new intermediate hash value (note 'addition modulo 2^32')
+    H0 = (H0 + a) & 0xffffffff;
+    H1 = (H1 + b) & 0xffffffff;
+    H2 = (H2 + c) & 0xffffffff;
+    H3 = (H3 + d) & 0xffffffff;
+    H4 = (H4 + e) & 0xffffffff;
+  }
+
+  return toHexStr(H0) + toHexStr(H1) + toHexStr(H2) + toHexStr(H3) + toHexStr(H4);
+}
+
+/**
+ * Function 'f' [§4.1.1].
+ */
+function f(s, x, y, z)  {
+  switch (s) {
+  case 0:
+    return (x & y) ^ (~x & z);           // Ch()
+  case 1:
+    return  x ^ y  ^  z;                 // Parity()
+  case 2:
+    return (x & y) ^ (x & z) ^ (y & z);  // Maj()
+  case 3:
+    return  x ^ y  ^  z;                 // Parity()
+  }
+}
+
+/**
+ * Rotates left (circular left shift) value x by n positions [§3.2.5].
+ */
+function ROTL(x, n) {
+  return (x << n) | (x >>> (32 - n));
+}
+
+/**
+ * Hexadecimal representation of a number.
+ */
+function toHexStr(n) {
+  // note can't use toString(16) as it is implementation-dependant,
+  // and in IE returns signed numbers when used on full words
+  var s = "", v;
+  for (var i = 7; i >= 0; i--) { v = (n >>> (i * 4)) & 0xf; s += v.toString(16); }
+  return s;
+}
+
+},{}],36:[function(require,module,exports){
 /*! @license ©2013 Ruben Verborgh - Multimedia Lab / iMinds / Ghent University */
 /** Browser replacement for the request module using jQuery. */
 
@@ -3801,23 +4297,23 @@ function createRequest(settings) {
     url: settings.url,
     timeout: settings.timeout,
     type: settings.method,
-    headers: { accept: 'text/turtle' },
+    headers: { accept: settings.headers && settings.headers.accept || '*/*' },
   })
   // Emit the result as a readable response iterator
-  .always(function () {
-    if (jqXHR.failure) return;
+  .success(function () {
     var response = new SingleIterator(jqXHR.responseText || '');
     response.statusCode = jqXHR.status;
     response.headers = { 'content-type': jqXHR.getResponseHeader('content-type') };
     request.emit('response', response);
   });
+  request.abort = function () { jqXHR.abort(); };
 
   return request;
 }
 
 module.exports = createRequest;
 
-},{"../../lib/iterators/Iterator":13,"events":4,"setimmediate":41}],30:[function(require,module,exports){
+},{"../../lib/iterators/Iterator":18,"events":5,"setimmediate":48}],37:[function(require,module,exports){
 /*! @license ©2014 Miel Vander Sande - Multimedia Lab / iMinds / Ghent University */
 /* Serializing the output of a SparqlIterator */
 
@@ -3872,16 +4368,16 @@ SparqlResultWriter.prototype._writeBoolean = function (result, done) {
 
 module.exports = SparqlResultWriter;
 
-},{"../iterators/Iterator":13}],31:[function(require,module,exports){
+},{"../iterators/Iterator":18}],38:[function(require,module,exports){
 (function (global){
 /**
  * @license
- * Lo-Dash 2.4.1 (Custom Build) <http://lodash.com/>
+ * Lo-Dash 2.4.2 (Custom Build) <https://lodash.com/>
  * Build: `lodash modern -o ./dist/lodash.js`
  * Copyright 2012-2013 The Dojo Foundation <http://dojofoundation.org/>
  * Based on Underscore.js 1.5.2 <http://underscorejs.org/LICENSE>
  * Copyright 2009-2013 Jeremy Ashkenas, DocumentCloud and Investigative Reporters & Editors
- * Available under MIT license <http://lodash.com/license>
+ * Available under MIT license <https://lodash.com/license>
  */
 ;(function() {
 
@@ -5370,6 +5866,7 @@ module.exports = SparqlResultWriter;
     var setBindData = !defineProperty ? noop : function(func, value) {
       descriptor.value = value;
       defineProperty(func, '__bindData__', descriptor);
+      descriptor.value = null;
     };
 
     /**
@@ -10015,7 +10512,7 @@ module.exports = SparqlResultWriter;
      * debugging. See http://www.html5rocks.com/en/tutorials/developertools/sourcemaps/#toc-sourceurl
      *
      * For more information on precompiling templates see:
-     * http://lodash.com/custom-builds
+     * https://lodash.com/custom-builds
      *
      * For more information on Chrome extension sandboxes see:
      * http://developer.chrome.com/stable/extensions/sandboxingEval.html
@@ -10584,7 +11081,7 @@ module.exports = SparqlResultWriter;
      * @memberOf _
      * @type string
      */
-    lodash.VERSION = '2.4.1';
+    lodash.VERSION = '2.4.2';
 
     // add "Chaining" functions to the wrapper
     lodash.prototype.chain = wrapperChain;
@@ -10661,7 +11158,7 @@ module.exports = SparqlResultWriter;
 }.call(this));
 
 }).call(this,typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{}],32:[function(require,module,exports){
+},{}],39:[function(require,module,exports){
 ;(function () { // closure for web browsers
 
 if (typeof module === 'object' && module.exports) {
@@ -10881,6 +11378,7 @@ function get (self, key, doUse) {
 function use (self, hit) {
   shiftLU(self, hit)
   hit.lu = self._mru ++
+  if (self._maxAge) hit.now = Date.now()
   self._lruList[hit.lu] = hit
 }
 
@@ -10915,7 +11413,7 @@ function Entry (key, value, lu, length, now) {
 
 })()
 
-},{}],33:[function(require,module,exports){
+},{}],40:[function(require,module,exports){
 // Replace local require by a lazy loader
 var globalRequire = require;
 require = function () {};
@@ -10943,30 +11441,11 @@ Object.keys(exports).forEach(function (submodule) {
   });
 });
 
-},{"./lib/N3Lexer":34,"./lib/N3Parser":35,"./lib/N3Store":36,"./lib/N3StreamParser":37,"./lib/N3StreamWriter":38,"./lib/N3Util":39,"./lib/N3Writer":40}],34:[function(require,module,exports){
+},{"./lib/N3Lexer":41,"./lib/N3Parser":42,"./lib/N3Store":43,"./lib/N3StreamParser":44,"./lib/N3StreamWriter":45,"./lib/N3Util":46,"./lib/N3Writer":47}],41:[function(require,module,exports){
 // **N3Lexer** tokenizes N3 documents.
-// ## Regular expressions
-var patterns = {
-  _iri: /^<((?:[^\x00-\x20<>\\"\{\}\|\^\`]|\\[uU])*)>/,
-  _string: /^"[^"\\]*(?:\\.[^"\\]*)*"(?=[^"\\])|^'[^'\\]*(?:\\.[^'\\]*)*'(?=[^'\\])/,
-  _tripleQuotedString: /^""("[^"\\]*(?:(?:\\.|"(?!""))[^"\\]*)*")""|^''('[^'\\]*(?:(?:\\.|'(?!''))[^'\\]*)*')''/,
-  _langcode: /^@([a-z]+(?:-[a-z0-9]+)*)(?=[^a-z0-9\-])/i,
-  _prefix: /^((?:[A-Za-z\xc0-\xd6\xd8-\xf6\xf8-\u02ff\u0370-\u037d\u037f-\u1fff\u200c\u200d\u2070-\u218f\u2c00-\u2fef\u3001-\ud7ff\uf900-\ufdcf\ufdf0-\ufffd]|[\ud800-\udb7f][\udc00-\udfff])(?:[\.\-0-9A-Z_a-z\xb7\xc0-\xd6\xd8-\xf6\xf8-\u037d\u037f-\u1fff\u200c\u200d\u203f\u2040\u2070-\u218f\u2c00-\u2fef\u3001-\ud7ff\uf900-\ufdcf\ufdf0-\ufffd]|[\ud800-\udb7f][\udc00-\udfff])*)?:(?=\s|<)/,
-  _prefixedName:  /^((?:[A-Z_a-z\xc0-\xd6\xd8-\xf6\xf8-\u02ff\u0370-\u037d\u037f-\u1fff\u200c\u200d\u2070-\u218f\u2c00-\u2fef\u3001-\ud7ff\uf900-\ufdcf\ufdf0-\ufffd]|[\ud800-\udb7f][\udc00-\udfff])(?:[\.\-0-9A-Z_a-z\xb7\xc0-\xd6\xd8-\xf6\xf8-\u037d\u037f-\u1fff\u200c\u200d\u203f\u2040\u2070-\u218f\u2c00-\u2fef\u3001-\ud7ff\uf900-\ufdcf\ufdf0-\ufffd]|[\ud800-\udb7f][\udc00-\udfff])*)?:((?:(?:[0-:A-Z_a-z\xc0-\xd6\xd8-\xf6\xf8-\u02ff\u0370-\u037d\u037f-\u1fff\u200c\u200d\u2070-\u218f\u2c00-\u2fef\u3001-\ud7ff\uf900-\ufdcf\ufdf0-\ufffd]|[\ud800-\udb7f][\udc00-\udfff]|%[0-9a-fA-F]{2}|\\[!#-\/;=?\-@_~])(?:(?:[\.\-0-:A-Z_a-z\xb7\xc0-\xd6\xd8-\xf6\xf8-\u037d\u037f-\u1fff\u200c\u200d\u203f\u2040\u2070-\u218f\u2c00-\u2fef\u3001-\ud7ff\uf900-\ufdcf\ufdf0-\ufffd]|[\ud800-\udb7f][\udc00-\udfff]|%[0-9a-fA-F]{2}|\\[!#-\/;=?\-@_~])*(?:[\-0-:A-Z_a-z\xb7\xc0-\xd6\xd8-\xf6\xf8-\u037d\u037f-\u1fff\u200c\u200d\u203f\u2040\u2070-\u218f\u2c00-\u2fef\u3001-\ud7ff\uf900-\ufdcf\ufdf0-\ufffd]|[\ud800-\udb7f][\udc00-\udfff]|%[0-9a-fA-F]{2}|\\[!#-\/;=?\-@_~]))?)?)(?=[\s#;,)\]]|\.[\s#\(\[<"'])/,
-  _number: /^[\-+]?(?:\d+\.?\d*([eE](?:[\-\+])?\d+)|\d+\.\d+|\.\d+|\d+)(?=[\s#.;,)\]])/,
-  _boolean: /^(?:true|false)(?=[\s#.;,)\]])/,
-  _dot: /^\.(?!\d)/, // If a digit follows a dot, it is a number, not punctuation.
-  _punctuation: /^[;,\[\]\(\)]/,
-  _fastString: /^"[^"\\]+"(?=[^"\\])/,
-  _keyword: /^@[a-z]+(?=\s)/,
-  _sparqlKeyword: /^(?:PREFIX|BASE)(?=\s)/i,
-  _type: /^\^\^(?:<([^>]*)>|([A-Z_a-z\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u02ff\u0370-\u037d\u037f-\u1fff\u200c-\u200d\u2070-\u218f\u2c00-\u2fef\u3001-\ud7ff\uf900-\ufdcf\ufdf0-\ufffd][\-0-9A-Z_a-z\u00b7\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u037d\u037f-\u1fff\u200c-\u200d\u203f-\u2040\u2070-\u218f\u2c00-\u2fef\u3001-\ud7ff\uf900-\ufdcf\ufdf0-\ufffd]*)?:([A-Z_a-z\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u02ff\u0370-\u037d\u037f-\u1fff\u200c-\u200d\u2070-\u218f\u2c00-\u2fef\u3001-\ud7ff\uf900-\ufdcf\ufdf0-\ufffd][\-0-9A-Z_a-z\u00b7\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u037d\u037f-\u1fff\u200c-\u200d\u203f-\u2040\u2070-\u218f\u2c00-\u2fef\u3001-\ud7ff\uf900-\ufdcf\ufdf0-\ufffd]*)(?=[\s\.;,)#]))/,
-  _shortPredicates: /^a(?=\s+|<)/,
-  _newline: /^[ \t]*(?:#[^\n\r]*)?(?:\r\n|\n|\r)[ \t]*/,
-  _whitespace: /^[ \t]+/,
-  _nonwhitespace: /^\S*/,
-  _endOfFile: /^(?:#[^\n\r]*)?$/,
-};
+var fromCharCode = String.fromCharCode;
+var immediately = typeof setImmediate === 'function' ? setImmediate :
+                  function setImmediate(func) { setTimeout(func, 0); };
 
 // Regular expression and replacement string to escape N3 strings.
 // Note how we catch invalid unicode sequences separately (they will trigger an error).
@@ -10976,29 +11455,53 @@ var escapeReplacements = { '\\': '\\', "'": "'", '"': '"',
                            '_': '_', '~': '~', '.': '.', '-': '-', '!': '!', '$': '$', '&': '&',
                            '(': '(', ')': ')', '*': '*', '+': '+', ',': ',', ';': ';', '=': '=',
                            '/': '/', '?': '?', '#': '#', '@': '@', '%': '%' };
-var illegalUrlChars = /[\x00-\x20<>\\"\{\}\|\^\`]/;
-var fromCharCode = String.fromCharCode;
-
-// Different punctuation types.
-var punctuationTypes = { '.': 'dot', ';': 'semicolon', ',': 'comma',
-                         '[': 'bracketopen', ']': 'bracketclose',
-                         '(': 'liststart', ')': 'listend' };
-
-// `setImmediate` shim
-var immediately = typeof setImmediate === 'function' ? setImmediate :
-                  function setImmediate(func) { setTimeout(func, 0); };
+var illegalIriChars = /[\x00-\x20<>\\"\{\}\|\^\`]/;
 
 // ## Constructor
-function N3Lexer() {
+function N3Lexer(options) {
   if (!(this instanceof N3Lexer))
-    return new N3Lexer();
+    return new N3Lexer(options);
 
-  // Local copies of the patterns perform slightly better.
-  for (var name in patterns)
-    this[name] = patterns[name];
+  // In line mode (N-Triples or N-Quads), only simple features may be parsed
+  if (options && options.lineMode) {
+    // Don't tokenize special literals
+    this._tripleQuotedString = this._number = this._boolean = /$0^/;
+    // Swap the tokenize method for a restricted version
+    var self = this;
+    this._tokenize = this.tokenize;
+    this.tokenize = function (input, callback) {
+      this._tokenize(input, function (error, token) {
+        if (!error && /IRI|prefixed|literal|langcode|type|\.|eof/.test(token.type))
+          callback && callback(error, token);
+        else
+          callback && callback(error || self._syntaxError(token.type, callback = null));
+      });
+    };
+  }
 }
 
 N3Lexer.prototype = {
+  // ## Regular expressions
+  // It's slightly faster to have these as properties than as in-scope variables.
+
+  _iri: /^<((?:[^>\\]|\\[uU])+)>/, // IRI with escape sequences; needs sanity check after unescaping
+  _unescapedIri: /^<([^\x00-\x20<>\\"\{\}\|\^\`]*)>/, // IRI without escape sequences; no unescaping
+  _unescapedString: /^"[^"\\]+"(?=[^"\\])/, // non-empty string without escape sequences
+  _singleQuotedString: /^"[^"\\]*(?:\\.[^"\\]*)*"(?=[^"\\])|^'[^'\\]*(?:\\.[^'\\]*)*'(?=[^'\\])/,
+  _tripleQuotedString: /^""("[^"\\]*(?:(?:\\.|"(?!""))[^"\\]*)*")""|^''('[^'\\]*(?:(?:\\.|'(?!''))[^'\\]*)*')''/,
+  _langcode: /^@([a-z]+(?:-[a-z0-9]+)*)(?=[^a-z0-9\-])/i,
+  _prefix: /^((?:[A-Za-z\xc0-\xd6\xd8-\xf6\xf8-\u02ff\u0370-\u037d\u037f-\u1fff\u200c\u200d\u2070-\u218f\u2c00-\u2fef\u3001-\ud7ff\uf900-\ufdcf\ufdf0-\ufffd]|[\ud800-\udb7f][\udc00-\udfff])(?:\.?[\-0-9A-Z_a-z\xb7\xc0-\xd6\xd8-\xf6\xf8-\u037d\u037f-\u1fff\u200c\u200d\u203f\u2040\u2070-\u218f\u2c00-\u2fef\u3001-\ud7ff\uf900-\ufdcf\ufdf0-\ufffd]|[\ud800-\udb7f][\udc00-\udfff])*)?:(?=[#\s<])/,
+  _prefixed: /^((?:[A-Za-z\xc0-\xd6\xd8-\xf6\xf8-\u02ff\u0370-\u037d\u037f-\u1fff\u200c\u200d\u2070-\u218f\u2c00-\u2fef\u3001-\ud7ff\uf900-\ufdcf\ufdf0-\ufffd]|[\ud800-\udb7f][\udc00-\udfff])(?:\.?[\-0-9A-Z_a-z\xb7\xc0-\xd6\xd8-\xf6\xf8-\u037d\u037f-\u1fff\u200c\u200d\u203f\u2040\u2070-\u218f\u2c00-\u2fef\u3001-\ud7ff\uf900-\ufdcf\ufdf0-\ufffd]|[\ud800-\udb7f][\udc00-\udfff])*)?:((?:(?:[0-:A-Z_a-z\xc0-\xd6\xd8-\xf6\xf8-\u02ff\u0370-\u037d\u037f-\u1fff\u200c\u200d\u2070-\u218f\u2c00-\u2fef\u3001-\ud7ff\uf900-\ufdcf\ufdf0-\ufffd]|[\ud800-\udb7f][\udc00-\udfff]|%[0-9a-fA-F]{2}|\\[!#-\/;=?\-@_~])(?:(?:[\.\-0-:A-Z_a-z\xb7\xc0-\xd6\xd8-\xf6\xf8-\u037d\u037f-\u1fff\u200c\u200d\u203f\u2040\u2070-\u218f\u2c00-\u2fef\u3001-\ud7ff\uf900-\ufdcf\ufdf0-\ufffd]|[\ud800-\udb7f][\udc00-\udfff]|%[0-9a-fA-F]{2}|\\[!#-\/;=?\-@_~])*(?:[\-0-:A-Z_a-z\xb7\xc0-\xd6\xd8-\xf6\xf8-\u037d\u037f-\u1fff\u200c\u200d\u203f\u2040\u2070-\u218f\u2c00-\u2fef\u3001-\ud7ff\uf900-\ufdcf\ufdf0-\ufffd]|[\ud800-\udb7f][\udc00-\udfff]|%[0-9a-fA-F]{2}|\\[!#-\/;=?\-@_~]))?)?)(?=\.?[,;\s#()\[\]\{\}"'<])/,
+  _blank: /^_:((?:[0-9A-Z_a-z\xc0-\xd6\xd8-\xf6\xf8-\u02ff\u0370-\u037d\u037f-\u1fff\u200c\u200d\u2070-\u218f\u2c00-\u2fef\u3001-\ud7ff\uf900-\ufdcf\ufdf0-\ufffd]|[\ud800-\udb7f][\udc00-\udfff])(?:\.?[\-0-9A-Z_a-z\xb7\xc0-\xd6\xd8-\xf6\xf8-\u037d\u037f-\u1fff\u200c\u200d\u203f\u2040\u2070-\u218f\u2c00-\u2fef\u3001-\ud7ff\uf900-\ufdcf\ufdf0-\ufffd]|[\ud800-\udb7f][\udc00-\udfff])*)(?=\.?[,;:\s#()\[\]\{\}"'<])/,
+  _number: /^[\-+]?(?:\d+\.?\d*([eE](?:[\-\+])?\d+)|\d*\.?\d+)(?=[.,;:\s#()\[\]\{\}"'<])/,
+  _boolean: /^(?:true|false)(?=[.,;:\s#()\[\]\{\}"'<])/,
+  _keyword: /^@[a-z]+(?=[\s#<:])/,
+  _sparqlKeyword: /^(?:PREFIX|BASE|GRAPH)(?=[\s#<:])/i,
+  _shortPredicates: /^a(?=\s+|<)/,
+  _newline: /^[ \t]*(?:#[^\n\r]*)?(?:\r\n|\n|\r)[ \t]*/,
+  _whitespace: /^[ \t]+/,
+  _endOfFile: /^(?:#[^\n\r]*)?$/,
+
   // ## Private methods
 
   // ### `_tokenizeToEnd` tokenizes as for as possible, emitting tokens through the callback.
@@ -11014,51 +11517,75 @@ N3Lexer.prototype = {
       if (whiteSpaceMatch = this._whitespace.exec(input))
         input = input.substr(whiteSpaceMatch[0].length, input.length);
 
-      // Create uniform token skeleton, so the JavaScript engine uses one runtime type for all tokens.
-      var token = { line: this._line, type: '', value: '', prefix: '' };
-
       // Stop for now if we're at the end.
       if (this._endOfFile.test(input)) {
         // If the input is finished, emit EOF.
-        if (inputFinished) {
-          input = null;
-          token.type = 'eof';
-          callback(null, token);
-        }
+        if (inputFinished)
+          callback(input = null, { line: this._line, type: 'eof', value: '', prefix: '' });
         return this._input = input;
       }
 
       // Look for specific token types based on the first character.
-      var firstChar = input[0], match = null, unescaped, inconclusive = false;
+      var line = this._line, type = '', value = '', prefix = '',
+          firstChar = input[0], match = null, matchLength = 0, unescaped, inconclusive = false;
       switch (firstChar) {
+      case '^':
+        // Try to match a type.
+        if (input.length === 1) break;
+        else if (input[1] !== '^') return reportSyntaxError(this);
+        this._prevTokenType = '^';
+        // Move to type IRI or prefixed name.
+        input = input.substr(2);
+        if (input[0] !== '<') {
+          inconclusive = true;
+          break;
+        }
+        // Fall through in case the type is an IRI.
+
       case '<':
-        // Try to find a full URI.
-        if (match = this._iri.exec(input)) {
+        // Try to find a full IRI without escape sequences.
+        if (match = this._unescapedIri.exec(input)) {
+          type = 'IRI';
+          value = match[1];
+        }
+        // Try to find a full IRI with escape sequences.
+        else if (match = this._iri.exec(input)) {
           unescaped = this._unescape(match[1]);
-          if (unescaped === null || illegalUrlChars.test(unescaped))
+          if (unescaped === null || illegalIriChars.test(unescaped))
             return reportSyntaxError(this);
-          token.type = 'IRI';
-          token.value = unescaped;
+          type = 'IRI';
+          value = unescaped;
+        }
+        break;
+
+      case '_':
+        // Try to find a blank node. Since it can contain (but not end with) a dot,
+        // we always need a non-dot character before deciding it is a prefixed name.
+        // Therefore, try inserting a space if we're at the end of the input.
+        if ((match = this._blank.exec(input)) ||
+            inputFinished && (match = this._blank.exec(input + ' '))) {
+          type = 'prefixed';
+          prefix = '_';
+          value = match[1];
         }
         break;
 
       case '"':
       case "'":
-        // Try to find a string literal the fast way.
-        // This only includes non-empty simple quoted literals without escapes.
-        if (match = this._fastString.exec(input)) {
-          token.type = 'literal';
-          token.value = match[0];
+        // Try to find a non-empty double-quoted literal without escape sequences.
+        if (match = this._unescapedString.exec(input)) {
+          type = 'literal';
+          value = match[0];
         }
-        // Try to find any other string literal wrapped in a pair of quotes.
-        else if (match = this._string.exec(input)) {
+        // Try to find any other literal wrapped in a pair of single or double quotes.
+        else if (match = this._singleQuotedString.exec(input)) {
           unescaped = this._unescape(match[0]);
           if (unescaped === null)
             return reportSyntaxError(this);
-          token.type = 'literal';
-          token.value = unescaped.replace(/^'|'$/g, '"');
+          type = 'literal';
+          value = unescaped.replace(/^'|'$/g, '"');
         }
-        // Try to find a string literal wrapped in a pair of triple quotes.
+        // Try to find a literal wrapped in three pairs of single or double quotes.
         else if (match = this._tripleQuotedString.exec(input)) {
           unescaped = match[1] || match[2];
           // Count the newlines and advance line counter.
@@ -11066,42 +11593,28 @@ N3Lexer.prototype = {
           unescaped = this._unescape(unescaped);
           if (unescaped === null)
             return reportSyntaxError(this);
-          token.type = 'literal';
-          token.value = unescaped.replace(/^'|'$/g, '"');
+          type = 'literal';
+          value = unescaped.replace(/^'|'$/g, '"');
         }
         break;
 
       case '@':
         // Try to find a language code.
         if (this._prevTokenType === 'literal' && (match = this._langcode.exec(input))) {
-          token.type = 'langcode';
-          token.value = match[1];
+          type = 'langcode';
+          value = match[1];
         }
         // Try to find a keyword.
         else if (match = this._keyword.exec(input)) {
-          token.type = match[0];
-        }
-        break;
-
-      case '^':
-        // Try to find a type.
-        if (match = this._type.exec(input)) {
-          token.type = 'type';
-          if (!match[2]) {
-            token.value = match[1];
-          }
-          else {
-            token.prefix = match[2];
-            token.value = match[3];
-          }
+          type = match[0];
         }
         break;
 
       case '.':
         // Try to find a dot as punctuation.
-        if (match = this._dot.test(input)) {
-          token.type = 'dot';
-          match = ['.'];
+        if (input.length === 1 ? inputFinished : (input[1] < '0' || input[1] > '9')) {
+          type = '.';
+          matchLength = 1;
           break;
         }
         // Fall through to numerical case (could be a decimal dot).
@@ -11120,9 +11633,9 @@ N3Lexer.prototype = {
       case '-':
         // Try to find a number.
         if (match = this._number.exec(input)) {
-          token.type = 'literal';
-          token.value = '"' + match[0] + '"^^http://www.w3.org/2001/XMLSchema#' +
-                        (match[1] ? 'double' : (/^[+\-]?\d+$/.test(match[0]) ? 'integer' : 'decimal'));
+          type = 'literal';
+          value = '"' + match[0] + '"^^http://www.w3.org/2001/XMLSchema#' +
+                  (match[1] ? 'double' : (/^[+\-]?\d+$/.test(match[0]) ? 'integer' : 'decimal'));
         }
         break;
 
@@ -11130,9 +11643,11 @@ N3Lexer.prototype = {
       case 'b':
       case 'p':
       case 'P':
+      case 'G':
+      case 'g':
         // Try to find a SPARQL-style keyword.
         if (match = this._sparqlKeyword.exec(input))
-          token.type = match[0].toUpperCase();
+          type = match[0].toUpperCase();
         else
           inconclusive = true;
         break;
@@ -11141,8 +11656,8 @@ N3Lexer.prototype = {
       case 't':
         // Try to match a boolean.
         if (match = this._boolean.exec(input)) {
-          token.type = 'literal';
-          token.value = '"' + match[0] + '"^^http://www.w3.org/2001/XMLSchema#boolean';
+          type = 'literal';
+          value = '"' + match[0] + '"^^http://www.w3.org/2001/XMLSchema#boolean';
         }
         else
           inconclusive = true;
@@ -11151,8 +11666,8 @@ N3Lexer.prototype = {
       case 'a':
         // Try to find an abbreviated predicate.
         if (match = this._shortPredicates.exec(input)) {
-          token.type = 'abbreviation';
-          token.value = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type';
+          type = 'abbreviation';
+          value = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type';
         }
         else
           inconclusive = true;
@@ -11164,9 +11679,11 @@ N3Lexer.prototype = {
       case ']':
       case '(':
       case ')':
-        // Try to find any punctuation (except a dot).
-        match = this._punctuation.exec(firstChar);
-        token.type = punctuationTypes[firstChar];
+      case '{':
+      case '}':
+        // The next token is punctuation
+        matchLength = 1;
+        type = firstChar;
         break;
 
       default:
@@ -11178,22 +11695,26 @@ N3Lexer.prototype = {
         // Try to find a prefix.
         if ((this._prevTokenType === '@prefix' || this._prevTokenType === 'PREFIX') &&
             (match = this._prefix.exec(input))) {
-          token.type = 'prefix';
-          token.value = match[1] || '';
+          type = 'prefix';
+          value = match[1] || '';
         }
         // Try to find a prefixed name. Since it can contain (but not end with) a dot,
         // we always need a non-dot character before deciding it is a prefixed name.
         // Therefore, try inserting a space if we're at the end of the input.
-        else if ((match = this._prefixedName.exec(input)) ||
-                 inputFinished && (match = this._prefixedName.exec(input + ' '))) {
-          token.type = 'prefixed';
-          token.prefix = match[1] || '';
-          token.value = this._unescape(match[2]);
+        else if ((match = this._prefixed.exec(input)) ||
+                 inputFinished && (match = this._prefixed.exec(input + ' '))) {
+          type = 'prefixed';
+          prefix = match[1] || '';
+          value = this._unescape(match[2]);
         }
       }
 
+      // A type token is special: it can only be emitted after an IRI or prefixed name is read.
+      if (this._prevTokenType === '^')
+        type = (type === 'IRI' || type === 'prefixed') ? 'type' : '';
+
       // What if nothing of the above was found?
-      if (match === null) {
+      if (!type) {
         // We could be in streaming mode, and then we just wait for more input to arrive.
         // Otherwise, a syntax error has occurred in the input.
         // One exception: error on an unaccounted linebreak (= not inside a triple-quoted literal).
@@ -11204,22 +11725,18 @@ N3Lexer.prototype = {
       }
 
       // Emit the parsed token.
-      callback(null, token);
-      this._prevTokenType = token.type;
+      callback(null, { line: line, type: type, value: value, prefix: prefix });
+      this._prevTokenType = type;
 
       // Advance to next part to tokenize.
-      input = input.substr(match[0].length, input.length);
+      input = input.substr(matchLength || match[0].length, input.length);
     }
 
     // Signals the syntax error through the callback
-    function reportSyntaxError(self) {
-      match = self._nonwhitespace.exec(input);
-      self._input = null;
-      callback(new Error('Syntax error: unexpected "' + match[0] + '" on line ' + self._line + '.'));
-    }
+    function reportSyntaxError(self) { callback(self._syntaxError(/^\S*/.exec(input)[0])); }
   },
 
-  // ### `unescape` replaces N3 escape codes by their corresponding characters.
+  // ### `_unescape` replaces N3 escape codes by their corresponding characters.
   _unescape: function (item) {
     try {
       return item.replace(escapeSequence, function (sequence, unicode4, unicode8, escapedChar) {
@@ -11232,8 +11749,8 @@ N3Lexer.prototype = {
         else if (unicode8) {
           charCode = parseInt(unicode8, 16);
           if (isNaN(charCode)) throw new Error(); // can never happen (regex), but helps performance
-          if (charCode < 0xFFFF) return fromCharCode(charCode);
-          return fromCharCode(0xD800 + ((charCode -= 0x10000) >> 10), 0xDC00 + (charCode & 0x3FF));
+          if (charCode <= 0xFFFF) return fromCharCode(charCode);
+          return fromCharCode(0xD800 + ((charCode -= 0x10000) / 0x400), 0xDC00 + (charCode & 0x3FF));
         }
         else {
           var replacement = escapeReplacements[escapedChar];
@@ -11245,6 +11762,13 @@ N3Lexer.prototype = {
     }
     catch (error) { return null; }
   },
+
+  // ### `_syntaxError` creates a syntax error for the given issue
+  _syntaxError: function (issue) {
+    this._input = null;
+    return new Error('Syntax error: unexpected "' + issue + '" on line ' + this._line + '.');
+  },
+
 
   // ## Public methods
 
@@ -11301,7 +11825,7 @@ N3Lexer.prototype = {
 // Export the `N3Lexer` class as a whole.
 module.exports = N3Lexer;
 
-},{}],35:[function(require,module,exports){
+},{}],42:[function(require,module,exports){
 // **N3Parser** parses N3 documents.
 var N3Lexer = require('./N3Lexer');
 
@@ -11310,43 +11834,60 @@ var RDF_PREFIX = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#',
     RDF_FIRST  = RDF_PREFIX + 'first',
     RDF_REST   = RDF_PREFIX + 'rest';
 
-var absoluteURI = /:/,
+var absoluteIRI = /:/,
     documentPart = /[^\/]*$/,
-    rootURI = /^(?:[^:]+:\/*)?[^\/]*/;
+    rootIRI = /^(?:[^:]+:\/*)?[^\/]*/;
 
 // The next ID for new blank nodes
-var blankNodeCount = 0;
+var blankNodePrefix = 0, blankNodeCount = 0;
 
 // ## Constructor
-function N3Parser(config) {
+function N3Parser(options) {
   if (!(this instanceof N3Parser))
-    return new N3Parser(config);
-
-  // Initialize the parser settings
-  config = config || {};
+    return new N3Parser(options);
   this._tripleStack = [];
-  this._lexer = config.lexer || new N3Lexer();
-  this._blankNodes = Object.create(null);
+  this._graph = null;
 
-  // Set the document URI
-  if (!config.documentURI) {
-    this._baseURI = null;
-    this._baseURIPath = null;
+  // Set the document IRI.
+  options = options || {};
+  if (!options.documentIRI) {
+    this._baseIRI = null;
+    this._baseIRIPath = null;
   }
   else {
-    if (config.documentURI.indexOf('#') > 0)
-      throw new Error('Invalid document URI');
-    this._baseURI = config.documentURI;
-    this._baseURIPath = this._baseURI.replace(documentPart, '');
-    this._baseURIRoot = this._baseURI.match(rootURI)[0];
+    if (options.documentIRI.indexOf('#') > 0)
+      throw new Error('Invalid document IRI');
+    this._baseIRI = options.documentIRI;
+    this._baseIRIPath = this._baseIRI.replace(documentPart, '');
+    this._baseIRIRoot = this._baseIRI.match(rootIRI)[0];
   }
+
+  // Set supported features depending on the format.
+  var format = (typeof options.format === 'string') && options.format.match(/\w*$/)[0].toLowerCase(),
+      isTurtle = format === 'turtle', isTriG = format === 'trig',
+      isNTriples = /triple/.test(format), isNQuads = /quad/.test(format),
+      isLineMode = isNTriples || isNQuads;
+  if (!(this._supportsNamedGraphs = !isTurtle))
+    this._readPredicateOrNamedGraph = this._readPredicate;
+  this._supportsQuads = !(isTurtle || isTriG || isNTriples);
+  // Disable relative IRIs in N-Triples or N-Quads mode
+  if (isLineMode) {
+    this._baseIRI = '';
+    this._resolveIRI = function (token) {
+      this._error('Disallowed relative IRI', token);
+      return this._callback = noop, this._subject = null;
+    };
+  }
+  this._blankNodePrefix = typeof options.blankNodePrefix !== 'string' ? '' :
+                            '_:' + options.blankNodePrefix.replace(/^_:/, '');
+  this._lexer = options.lexer || new N3Lexer({ lineMode: isLineMode });
 }
 
 // ## Private class methods
 
 // ### `_resetBlankNodeIds` restarts blank node identification.
 N3Parser._resetBlankNodeIds = function () {
-  blankNodeCount = 0;
+  blankNodePrefix = blankNodeCount = 0;
 };
 
 N3Parser.prototype = {
@@ -11357,6 +11898,9 @@ N3Parser.prototype = {
     switch (token.type) {
     // If an EOF token arrives in the top context, signal that we're done.
     case 'eof':
+      if (this._graph !== null)
+        return this._error('Unclosed graph', token);
+      delete this._prefixes._;
       return this._callback(null, null, this._prefixes);
     // It could be a prefix declaration.
     case '@prefix':
@@ -11368,10 +11912,21 @@ N3Parser.prototype = {
     // It could be a base declaration.
     case '@base':
       this._sparqlStyle = false;
-      return this._readBaseURI;
+      return this._readBaseIRI;
     case 'BASE':
       this._sparqlStyle = true;
-      return this._readBaseURI;
+      return this._readBaseIRI;
+    // It could be a graph.
+    case '{':
+      if (this._supportsNamedGraphs) {
+        this._graph = '';
+        this._subject = null;
+        return this._readSubject;
+      }
+    case 'GRAPH':
+      if (this._supportsNamedGraphs) {
+        return this._readNamedGraphLabel;
+      }
     // Otherwise, the next token must be a subject.
     default:
       return this._readSubject(token);
@@ -11380,52 +11935,50 @@ N3Parser.prototype = {
 
   // ### `_readSubject` reads a triple's subject.
   _readSubject: function (token) {
+    this._predicate = null;
     switch (token.type) {
     case 'IRI':
-      if (this._baseURI === null || absoluteURI.test(token.value))
+      if (this._baseIRI === null || absoluteIRI.test(token.value))
         this._subject = token.value;
       else
-        this._subject = this._resolveURI(token.value);
+        this._subject = this._resolveIRI(token);
       break;
     case 'prefixed':
-      if (token.prefix === '_') {
-        this._subject = this._blankNodes[token.value] ||
-                        (this._blankNodes[token.value] = '_:b' + blankNodeCount++);
-      }
-      else {
-        var prefix = this._prefixes[token.prefix];
-        if (prefix === undefined)
-          return this._error('Undefined prefix "' + token.prefix + ':"', token);
-        this._subject = prefix + token.value;
-      }
+      var prefix = this._prefixes[token.prefix];
+      if (prefix === undefined)
+        return this._error('Undefined prefix "' + token.prefix + ':"', token);
+      this._subject = prefix + token.value;
       break;
-    case 'bracketopen':
+    case '[':
       // Start a new triple with a new blank node as subject.
       this._subject = '_:b' + blankNodeCount++;
       this._tripleStack.push({ subject: this._subject, predicate: null, object: null, type: 'blank' });
       return this._readBlankNodeHead;
-    case 'liststart':
+    case '(':
       // Start a new list
       this._tripleStack.push({ subject: RDF_NIL, predicate: null, object: null, type: 'list' });
       this._subject = null;
       return this._readListItem;
+    case '}':
+      return this._readPunctuation(token);
     default:
       return this._error('Expected subject but got ' + token.type, token);
     }
-    this._subjectHasPredicate = false;
-    // The next token must be a predicate.
-    return this._readPredicate;
+    // The next token must be a predicate,
+    // or, if the subject was actually a graph IRI, a named graph.
+    return this._readPredicateOrNamedGraph;
   },
 
   // ### `_readPredicate` reads a triple's predicate.
   _readPredicate: function (token) {
-    switch (token.type) {
+    var type = token.type;
+    switch (type) {
     case 'IRI':
     case 'abbreviation':
-      if (this._baseURI === null || absoluteURI.test(token.value))
+      if (this._baseIRI === null || absoluteIRI.test(token.value))
         this._predicate = token.value;
       else
-        this._predicate = this._resolveURI(token.value);
+        this._predicate = this._resolveIRI(token);
       break;
     case 'prefixed':
       if (token.prefix === '_') {
@@ -11438,22 +11991,20 @@ N3Parser.prototype = {
         this._predicate = prefix + token.value;
       }
       break;
-    case 'bracketclose':
+    case '.':
+    case ']':
+    case '}':
       // Expected predicate didn't come, must have been trailing semicolon.
-      return this._readBlankNodeTail(token, true);
-    case 'dot':
-      // A dot is not allowed if the subject did not have a predicate yet
-      if (!this._subjectHasPredicate)
-        return this._error('Unexpected dot', token);
-      // Expected predicate didn't come, must have been trailing semicolon.
-      return this._readPunctuation(token, true);
-    case 'semicolon':
+      if (this._predicate === null)
+        return this._error('Unexpected ' + type, token);
+      this._subject = null;
+      return type === ']' ? this._readBlankNodeTail(token) : this._readPunctuation(token);
+    case ';':
       // Extra semicolons can be safely ignored
       return this._readPredicate;
     default:
       return this._error('Expected predicate to follow "' + this._subject + '"', token);
     }
-    this._subjectHasPredicate = true;
     // The next token must be an object.
     return this._readObject;
   },
@@ -11462,33 +12013,27 @@ N3Parser.prototype = {
   _readObject: function (token) {
     switch (token.type) {
     case 'IRI':
-      if (this._baseURI === null || absoluteURI.test(token.value))
+      if (this._baseIRI === null || absoluteIRI.test(token.value))
         this._object = token.value;
       else
-        this._object = this._resolveURI(token.value);
+        this._object = this._resolveIRI(token);
       break;
     case 'prefixed':
-      if (token.prefix === '_') {
-        this._object = this._blankNodes[token.value] ||
-                       (this._blankNodes[token.value] = '_:b' + blankNodeCount++);
-      }
-      else {
-        var prefix = this._prefixes[token.prefix];
-        if (prefix === undefined)
-          return this._error('Undefined prefix "' + token.prefix + ':"', token);
-        this._object = prefix + token.value;
-      }
+      var prefix = this._prefixes[token.prefix];
+      if (prefix === undefined)
+        return this._error('Undefined prefix "' + token.prefix + ':"', token);
+      this._object = prefix + token.value;
       break;
     case 'literal':
       this._object = token.value;
       return this._readDataTypeOrLang;
-    case 'bracketopen':
+    case '[':
       // Start a new triple with a new blank node as subject.
       var blank = '_:b' + blankNodeCount++;
       this._tripleStack.push({ subject: this._subject, predicate: this._predicate, object: blank, type: 'blank' });
       this._subject = blank;
       return this._readBlankNodeHead;
-    case 'liststart':
+    case '(':
       // Start a new list
       this._tripleStack.push({ subject: this._subject, predicate: this._predicate, object: RDF_NIL, type: 'list' });
       this._subject = null;
@@ -11499,25 +12044,41 @@ N3Parser.prototype = {
     return this._getTripleEndReader();
   },
 
+  // ### `_readPredicateOrNamedGraph` reads a triple's predicate, or a named graph.
+  _readPredicateOrNamedGraph: function (token) {
+    return token.type === '{' ? this._readGraph(token) : this._readPredicate(token);
+  },
+
+  // ### `_readGraph` reads a graph.
+  _readGraph: function (token) {
+    if (token.type !== '{')
+      return this._error('Expected graph but got ' + token.type, token);
+    // The "subject" we read is actually the GRAPH's label
+    this._graph = this._subject, this._subject = null;
+    return this._readSubject;
+  },
+
   // ### `_readBlankNodeHead` reads the head of a blank node.
   _readBlankNodeHead: function (token) {
-    if (token.type === 'bracketclose')
-      return this._readBlankNodeTail(token, true);
-    else
-      return this._readPredicate(token);
+    if (token.type === ']') {
+      this._subject = null;
+      return this._readBlankNodeTail(token);
+    }
+    this._predicate = null;
+    return this._readPredicate(token);
   },
 
   // ### `_readBlankNodeTail` reads the end of a blank node.
-  _readBlankNodeTail: function (token, empty) {
-    if (token.type !== 'bracketclose')
-      return this._readPunctuation(token);
+  _readBlankNodeTail: function (token) {
+    if (token.type !== ']')
+      return this._readBlankNodePunctuation(token);
 
     // Store blank node triple.
-    if (empty !== true)
-      this._callback(null, { subject: this._subject,
+    if (this._subject !== null)
+      this._callback(null, { subject:   this._subject,
                              predicate: this._predicate,
-                             object: this._object,
-                             context: 'n3/contexts#default' });
+                             object:    this._object,
+                             graph:     this._graph || '' });
 
     // Restore parent triple that contains the blank node.
     var triple = this._tripleStack.pop();
@@ -11530,7 +12091,8 @@ N3Parser.prototype = {
       return this._getTripleEndReader();
     }
     // The blank node was the subject, so continue reading the predicate.
-    return this._readPredicate;
+    // If the blank node didn't contain any predicates, it could also be the label of a named graph.
+    return this._predicate !== null ? this._readPredicate : this._readPredicateOrNamedGraph;
   },
 
   // ### `_readDataTypeOrLang` reads an _optional_ data type or language.
@@ -11539,7 +12101,10 @@ N3Parser.prototype = {
     case 'type':
       var value;
       if (token.prefix === '') {
-        value = token.value;
+        if (this._baseIRI === null || absoluteIRI.test(token.value))
+          value = token.value;
+        else
+          value = this._resolveIRI(token);
       }
       else {
         var prefix = this._prefixes[token.prefix];
@@ -11571,22 +12136,16 @@ N3Parser.prototype = {
       item = token.value;
       break;
     case 'prefixed':
-      if (token.prefix === '_') {
-        item = this._blankNodes[token.value] ||
-                       (this._blankNodes[token.value] = '_:b' + blankNodeCount++);
-      }
-      else {
-        var prefix = this._prefixes[token.prefix];
-        if (prefix === undefined)
-          return this._error('Undefined prefix "' + token.prefix + ':"', token);
-        item = prefix + token.value;
-      }
+      var prefix = this._prefixes[token.prefix];
+      if (prefix === undefined)
+        return this._error('Undefined prefix "' + token.prefix + ':"', token);
+      item = prefix + token.value;
       break;
     case 'literal':
       item = token.value;
       next = this._readDataTypeOrLang;
       break;
-    case 'bracketopen':
+    case '[':
       // Stack the current list triple and start a new triple with a blank node as subject.
       itemHead = '_:b' + blankNodeCount++;
       item     = '_:b' + blankNodeCount++;
@@ -11594,23 +12153,23 @@ N3Parser.prototype = {
       this._subject = item;
       next = this._readBlankNodeHead;
       break;
-    case 'liststart':
+    case '(':
       // Stack the current list triple and start a new list
       itemHead = '_:b' + blankNodeCount++;
       stack.push({ subject: itemHead, predicate: RDF_FIRST, object: RDF_NIL, type: 'list' });
       this._subject = null;
       next = this._readListItem;
       break;
-    case 'listend':
+    case ')':
       // Restore the parent triple.
       stack.pop();
       // If this list is contained within a parent list, return the membership triple here.
-      // This will be `<parent list elemen>t rdf:first <this list>.`.
+      // This will be `<parent list element> rdf:first <this list>.`.
       if (stack.length !== 0 && stack[stack.length - 1].type === 'list')
-        this._callback(null, { subject: parentTriple.subject,
+        this._callback(null, { subject:   parentTriple.subject,
                                predicate: parentTriple.predicate,
-                               object: parentTriple.object,
-                               context: 'n3/contexts#default' });
+                               object:    parentTriple.object,
+                               graph:     this._graph || '' });
       // Restore the parent triple's subject.
       this._subject = parentTriple.subject;
       // Was this list in the parent triple's subject?
@@ -11652,46 +12211,103 @@ N3Parser.prototype = {
     }
     else {
       // The rest of the list is in the current head.
-      this._callback(null, { subject: prevItemHead,
+      this._callback(null, { subject:   prevItemHead,
                              predicate: RDF_REST,
-                             object: itemHead,
-                             context: 'n3/contexts#default' });
+                             object:    itemHead,
+                             graph:     this._graph || '' });
     }
     // Add the item's value.
     if (item !== null)
-      this._callback(null, { subject: itemHead,
+      this._callback(null, { subject:   itemHead,
                              predicate: RDF_FIRST,
-                             object: item,
-                             context: 'n3/contexts#default' });
+                             object:    item,
+                             graph:     this._graph || '' });
     return next;
   },
 
   // ### `_readPunctuation` reads punctuation between triples or triple parts.
-  _readPunctuation: function (token, empty) {
-    var next;
+  _readPunctuation: function (token) {
+    var next, subject = this._subject, graph = this._graph;
     switch (token.type) {
+    // A closing brace ends a graph
+    case '}':
+      if (this._graph === null)
+        return this._error('Unexpected graph closing', token);
+      this._graph = null;
     // A dot just ends the statement, without sharing anything with the next.
-    case 'dot':
+    case '.':
+      this._subject = null;
       next = this._readInTopContext;
       break;
     // Semicolon means the subject is shared; predicate and object are different.
-    case 'semicolon':
+    case ';':
       next = this._readPredicate;
       break;
     // Comma means both the subject and predicate are shared; the object is different.
-    case 'comma':
+    case ',':
+      next = this._readObject;
+      break;
+    // An IRI means this is a quad (only allowed if not already inside a graph).
+    case 'IRI':
+      if (this._supportsQuads && this._graph === null) {
+        if (this._baseIRI === null || absoluteIRI.test(token.value))
+          graph = token.value;
+        else
+          graph = this._resolveIRI(token);
+        subject = this._subject;
+        next = this._readQuadPunctuation;
+        break;
+      }
+    // An prefixed name means this is a quad (only allowed if not already inside a graph).
+    case 'prefixed':
+      if (this._supportsQuads && this._graph === null) {
+        var prefix = this._prefixes[token.prefix];
+        if (prefix === undefined)
+          return this._error('Undefined prefix "' + token.prefix + ':"', token);
+        graph = prefix + token.value;
+        next = this._readQuadPunctuation;
+        break;
+      }
+    default:
+      return this._error('Expected punctuation to follow "' + this._object + '"', token);
+    }
+    // A triple has been completed now, so return it.
+    if (subject !== null)
+      this._callback(null, { subject:   subject,
+                             predicate: this._predicate,
+                             object:    this._object,
+                             graph:     graph || '' });
+    return next;
+  },
+
+    // ### `_readBlankNodePunctuation` reads punctuation in a blank node
+  _readBlankNodePunctuation: function (token) {
+    var next;
+    switch (token.type) {
+    // Semicolon means the subject is shared; predicate and object are different.
+    case ';':
+      next = this._readPredicate;
+      break;
+    // Comma means both the subject and predicate are shared; the object is different.
+    case ',':
       next = this._readObject;
       break;
     default:
       return this._error('Expected punctuation to follow "' + this._object + '"', token);
     }
     // A triple has been completed now, so return it.
-    if (!empty)
-      this._callback(null, { subject: this._subject,
-                             predicate: this._predicate,
-                             object: this._object,
-                             context: 'n3/contexts#default' });
+    this._callback(null, { subject:   this._subject,
+                           predicate: this._predicate,
+                           object:    this._object,
+                           graph:     this._graph || '' });
     return next;
+  },
+
+  // ### `_readQuadPunctuation` reads punctuation after a quad.
+  _readQuadPunctuation: function (token) {
+    if (token.type !== '.')
+      return this._error('Expected dot to follow quad', token);
+    return this._readInTopContext;
   },
 
   // ### `_readPrefix` reads the prefix of a prefix declaration.
@@ -11699,36 +12315,57 @@ N3Parser.prototype = {
     if (token.type !== 'prefix')
       return this._error('Expected prefix to follow @prefix', token);
     this._prefix = token.value;
-    return this._readPrefixURI;
+    return this._readPrefixIRI;
   },
 
-  // ### `_readPrefixURI` reads the URI of a prefix declaration.
-  _readPrefixURI: function (token) {
+  // ### `_readPrefixIRI` reads the IRI of a prefix declaration.
+  _readPrefixIRI: function (token) {
     if (token.type !== 'IRI')
       return this._error('Expected IRI to follow prefix "' + this._prefix + ':"', token);
-    var prefixURI;
-    if (this._baseURI === null || absoluteURI.test(token.value))
-      prefixURI = token.value;
+    var prefixIRI;
+    if (this._baseIRI === null || absoluteIRI.test(token.value))
+      prefixIRI = token.value;
     else
-      prefixURI = this._resolveURI(token.value);
-    this._prefixes[this._prefix] = prefixURI;
-    this._prefixCallback(this._prefix, prefixURI);
+      prefixIRI = this._resolveIRI(token);
+    this._prefixes[this._prefix] = prefixIRI;
+    this._prefixCallback(this._prefix, prefixIRI);
     return this._readDeclarationPunctuation;
   },
 
-  // ### `_readBaseURI` reads the URI of a base declaration.
-  _readBaseURI: function (token) {
+  // ### `_readBaseIRI` reads the IRI of a base declaration.
+  _readBaseIRI: function (token) {
     if (token.type !== 'IRI')
       return this._error('Expected IRI to follow base declaration', token);
     if (token.value.indexOf('#') > 0)
-      return this._error('Invalid base URI', token);
-    if (this._baseURI === null || absoluteURI.test(token.value))
-      this._baseURI = token.value;
+      return this._error('Invalid base IRI', token);
+    if (this._baseIRI === null || absoluteIRI.test(token.value))
+      this._baseIRI = token.value;
     else
-      this._baseURI = this._resolveURI(token.value);
-    this._baseURIPath = this._baseURI.replace(documentPart, '');
-    this._baseURIRoot = this._baseURI.match(rootURI)[0];
+      this._baseIRI = this._resolveIRI(token);
+    this._baseIRIPath = this._baseIRI.replace(documentPart, '');
+    this._baseIRIRoot = this._baseIRI.match(rootIRI)[0];
     return this._readDeclarationPunctuation;
+  },
+
+  // ### `_readNamedGraphLabel` reads the label of a named graph.
+  _readNamedGraphLabel: function (token) {
+    switch (token.type) {
+    case 'IRI':
+    case 'prefixed':
+      return this._readSubject(token), this._readGraph;
+    case '[':
+      return this._readNamedGraphBlankLabel;
+    default:
+      return this._error('Invalid graph label', token);
+    }
+  },
+
+  // ### `_readNamedGraphLabel` reads a blank node label of a named graph.
+  _readNamedGraphBlankLabel: function (token) {
+    if (token.type !== ']')
+      return this._error('Invalid graph label', token);
+    this._subject = '_:b' + blankNodeCount++;
+    return this._readGraph;
   },
 
   // ### `_readDeclarationPunctuation` reads the punctuation of a declaration.
@@ -11737,7 +12374,7 @@ N3Parser.prototype = {
     if (this._sparqlStyle)
       return this._readInTopContext(token);
 
-    if (token.type !== 'dot')
+    if (token.type !== '.')
       return this._error('Expected declaration to end with a dot', token);
     return this._readInTopContext;
   },
@@ -11761,24 +12398,25 @@ N3Parser.prototype = {
     this._callback(new Error(message + ' at line ' + token.line + '.'));
   },
 
-  // ### `_resolveURI` resolves a URI against a base path
-  _resolveURI: function (uri) {
-    switch (uri[0]) {
-    // An empty relative URI indicates the base URI
+  // ### `_resolveIRI` resolves an IRI token against the base path
+  _resolveIRI: function (token) {
+    var iri = token.value;
+    switch (iri[0]) {
+    // An empty relative IRI indicates the base IRI
     case undefined:
-      return this._baseURI;
-    // Resolve relative fragment URIs against the base URI
+      return this._baseIRI;
+    // Resolve relative fragment IRIs against the base IRI
     case '#':
-      return this._baseURI     + uri;
-    // Resolve relative query string URIs by replacing the query string
+      return this._baseIRI     + iri;
+    // Resolve relative query string IRIs by replacing the query string
     case '?':
-      return this._baseURI.replace(/(?:\?.*)?$/, uri);
-    // Resolve root relative URIs at the root of the base URI
+      return this._baseIRI.replace(/(?:\?.*)?$/, iri);
+    // Resolve root relative IRIs at the root of the base IRI
     case '/':
-      return this._baseURIRoot + uri;
-    // Resolve all other URIs at the base URI's path
+      return this._baseIRIRoot + iri;
+    // Resolve all other IRIs at the base IRI's path
     default:
-      return this._baseURIPath + uri;
+      return this._baseIRIPath + iri;
     }
   },
 
@@ -11789,7 +12427,8 @@ N3Parser.prototype = {
     // The read callback is the next function to be executed when a token arrives.
     // We start reading in the top context.
     this._readCallback = this._readInTopContext;
-    this._prefixes = {};
+    this._prefixes = Object.create(null);
+    this._prefixes._ = this._blankNodePrefix || '_:b' + blankNodePrefix++ + '_';
 
     // If the input argument is not given, shift parameters
     if (typeof input === 'function')
@@ -11802,12 +12441,10 @@ N3Parser.prototype = {
     // Execute the read callback when a token arrives.
     var self = this;
     this._lexer.tokenize(input, function (error, token) {
-      if (self._readCallback !== undefined) {
-        if (error !== null)
-          self._callback(error);
-        else
-          self._readCallback = self._readCallback(token);
-      }
+      if (error !== null)
+        self._callback(error), self._callback = noop;
+      else if (self._readCallback !== undefined)
+        self._readCallback = self._readCallback(token);
     });
 
     // If no input was given, it can be added with `addChunk` and ended with `end`
@@ -11826,45 +12463,42 @@ function noop() {}
 // Export the `N3Parser` class as a whole.
 module.exports = N3Parser;
 
-},{"./N3Lexer":34}],36:[function(require,module,exports){
-// **N3Store** objects store N3 triples with an associated context in memory.
+},{"./N3Lexer":41}],43:[function(require,module,exports){
+// **N3Store** objects store N3 triples by graph in memory.
 
 var expandPrefixedName = require('./N3Util').expandPrefixedName;
 
 // ## Constructor
-function N3Store(triples, prefixes) {
+function N3Store(triples, options) {
   if (!(this instanceof N3Store))
-    return new N3Store(triples, prefixes);
+    return new N3Store(triples, options);
 
   // The number of triples is initially zero.
   this._size = 0;
-  // `_contexts` contains subject, predicate, and object indexes per context.
-  this._contexts = Object.create(null);
+  // `_graphs` contains subject, predicate, and object indexes per graph.
+  this._graphs = Object.create(null);
   // `_entities` maps entities such as `http://xmlns.com/foaf/0.1/name` to numbers.
-  // This saves memory, since only the numbers have to be stored in `_contexts`.
+  // This saves memory, since only the numbers have to be stored in `_graphs`.
   this._entities = Object.create(null);
-  this._entities['>>____unused_item_to_make_first_entity_key_non-falsy____<<'] = 0;
+  this._entities['><'] = 0; // Dummy entry, so the first actual key is non-zero
   this._entityCount = 0;
   // `_blankNodeIndex` is the index of the last created blank node that was automatically named
   this._blankNodeIndex = 0;
 
   // Shift parameters if `triples` is not given
-  if (!prefixes && triples && !triples[0])
-    prefixes = triples, triples = null;
+  if (!options && triples && !triples[0])
+    options = triples, triples = null;
 
   // Add triples and prefixes if passed
   this._prefixes = Object.create(null);
-  triples && this.addTriples(triples);
-  prefixes && this.addPrefixes(prefixes);
+  if (options && options.prefixes)
+    this.addPrefixes(options.prefixes);
+  if (triples)
+    this.addTriples(triples);
 }
 
 N3Store.prototype = {
   // ## Public properties
-
-  // `defaultContext` is the default context wherein triples are stored.
-  get defaultContext() {
-    return 'n3/contexts#default';
-  },
 
   // ### `size` returns the number of triples in the store.
   get size() {
@@ -11874,9 +12508,9 @@ N3Store.prototype = {
       return size;
 
     // Calculate the number of triples by counting to the deepest level.
-    var contexts = this._contexts, subjects, subject;
-    for (var contextKey in contexts)
-      for (var subjectKey in (subjects = contexts[contextKey].subjects))
+    var graphs = this._graphs, subjects, subject;
+    for (var graphKey in graphs)
+      for (var subjectKey in (subjects = graphs[graphKey].subjects))
         for (var predicateKey in (subject = subjects[subjectKey]))
           size += Object.keys(subject[predicateKey]).length;
     return this._size = size;
@@ -11912,8 +12546,8 @@ N3Store.prototype = {
   // `name0`, `name1`, and `name2` are the names of the keys at each level,
   // used when reconstructing the resulting triple
   // (for instance: _subject_, _predicate_, and _object_).
-  // Finally, `context` will be the context of the created triples.
-  _findInIndex: function (index0, key0, key1, key2, name0, name1, name2, context) {
+  // Finally, `graph` will be the graph of the created triples.
+  _findInIndex: function (index0, key0, key1, key2, name0, name1, name2, graph) {
     var results = [], entityKeys = Object.keys(this._entities), tmp, index1, index2;
 
     // If a key is specified, use only that part of index 0.
@@ -11932,7 +12566,7 @@ N3Store.prototype = {
             var values = key2 ? (key2 in index2 ? [key2] : []) : Object.keys(index2);
             // Create triples for all items found in index 2.
             for (var l = values.length - 1; l >= 0; l--) {
-              var result = { context: context };
+              var result = { subject: '', predicate: '', object: '', graph: graph };
               result[name0] = entity0;
               result[name1] = entity1;
               result[name2] = entityKeys[values[l]];
@@ -11955,7 +12589,6 @@ N3Store.prototype = {
     if (key0) (tmp = index0, index0 = {})[key0] = tmp[key0];
     for (var value0 in index0) {
       if (index1 = index0[value0]) {
-
         // If a key is specified, count only that part of index 1.
         if (key1) (tmp = index1, index1 = {})[key1] = tmp[key1];
         for (var value1 in index1) {
@@ -11974,28 +12607,28 @@ N3Store.prototype = {
   // ## Public methods
 
   // ### `addTriple` adds a new N3 triple to the store.
-  addTriple: function (subject, predicate, object, context) {
+  addTriple: function (subject, predicate, object, graph) {
     // Shift arguments if a triple object is given instead of components
     if (!predicate)
-      context = subject.context, object = subject.object,
+      graph = subject.graph, object = subject.object,
         predicate = subject.predicate, subject = subject.subject;
 
-    // Find the context that will contain the triple.
-    context = context || this.defaultContext;
-    var contextItem = this._contexts[context];
-    // Create the context if it doesn't exist yet.
-    if (!contextItem) {
-      contextItem = this._contexts[context] = {
+    // Find the graph that will contain the triple.
+    graph = graph || '';
+    var graphItem = this._graphs[graph];
+    // Create the graph if it doesn't exist yet.
+    if (!graphItem) {
+      graphItem = this._graphs[graph] = {
         subjects: {},
         predicates: {},
         objects: {}
       };
-      // Freezing a context helps subsequent `add` performance,
+      // Freezing a graph helps subsequent `add` performance,
       // and properties will never be modified anyway.
-      Object.freeze(contextItem);
+      Object.freeze(graphItem);
     }
 
-    // Since entities can often be long URIs, we avoid storing them in every index.
+    // Since entities can often be long IRIs, we avoid storing them in every index.
     // Instead, we have a separate index that maps entities to numbers,
     // which are then used as keys in the other indexes.
     var entities = this._entities;
@@ -12003,9 +12636,9 @@ N3Store.prototype = {
     predicate = entities[predicate] || (entities[predicate] = ++this._entityCount);
     object    = entities[object]    || (entities[object]    = ++this._entityCount);
 
-    this._addToIndex(contextItem.subjects,   subject,   predicate, object);
-    this._addToIndex(contextItem.predicates, predicate, object,    subject);
-    this._addToIndex(contextItem.objects,    object,    subject,   predicate);
+    this._addToIndex(graphItem.subjects,   subject,   predicate, object);
+    this._addToIndex(graphItem.predicates, predicate, object,    subject);
+    this._addToIndex(graphItem.objects,    object,    subject,   predicate);
 
     // The cached triple count is now invalid.
     this._size = null;
@@ -12018,46 +12651,46 @@ N3Store.prototype = {
   },
 
   // ### `addPrefix` adds support for querying with the given prefix
-  addPrefix: function (prefix, uri) {
-    this._prefixes[prefix] = uri;
+  addPrefix: function (prefix, iri) {
+    this._prefixes[prefix] = iri;
   },
 
-  // ### `addPrefixex` adds support for querying with the given prefixes
+  // ### `addPrefixes` adds support for querying with the given prefixes
   addPrefixes: function (prefixes) {
     for (var prefix in prefixes)
       this.addPrefix(prefix, prefixes[prefix]);
   },
 
   // ### `removeTriple` removes an N3 triple from the store if it exists.
-  removeTriple: function (subject, predicate, object, context) {
+  removeTriple: function (subject, predicate, object, graph) {
     // Shift arguments if a triple object is given instead of components.
     if (!predicate)
-      context = subject.context, object = subject.object,
+      graph = subject.graph, object = subject.object,
         predicate = subject.predicate, subject = subject.subject;
-    context = context || this.defaultContext;
+    graph = graph || '';
 
     // Find internal identifiers for all components.
-    var contextItem, entities = this._entities, contexts = this._contexts;
+    var graphItem, entities = this._entities, graphs = this._graphs;
     if (!(subject     = entities[subject]))   return;
     if (!(predicate   = entities[predicate])) return;
     if (!(object      = entities[object]))    return;
-    if (!(contextItem = contexts[context]))   return;
+    if (!(graphItem   = graphs[graph]))       return;
 
     // Verify that the triple exists.
     var subjects, predicates;
-    if (!(subjects   = contextItem.subjects[subject])) return;
+    if (!(subjects   = graphItem.subjects[subject])) return;
     if (!(predicates = subjects[predicate])) return;
     if (!(object in predicates)) return;
 
     // Remove it from all indexes.
-    this._removeFromIndex(contextItem.subjects,   subject,   predicate, object);
-    this._removeFromIndex(contextItem.predicates, predicate, object,    subject);
-    this._removeFromIndex(contextItem.objects,    object,    subject,   predicate);
+    this._removeFromIndex(graphItem.subjects,   subject,   predicate, object);
+    this._removeFromIndex(graphItem.predicates, predicate, object,    subject);
+    this._removeFromIndex(graphItem.objects,    object,    subject,   predicate);
     if (this._size !== null) this._size--;
 
-    // Remove the context if it is empty.
-    for (subject in contextItem.subjects) return;
-    delete contexts[context];
+    // Remove the graph if it is empty.
+    for (subject in graphItem.subjects) return;
+    delete graphs[graph];
   },
 
   // ### `removeTriples` removes multiple N3 triples from the store.
@@ -12068,28 +12701,28 @@ N3Store.prototype = {
 
   // ### `find` finds a set of triples matching a pattern, expanding prefixes as necessary.
   // Setting `subject`, `predicate`, or `object` to `null` means an _anything_ wildcard.
-  // Setting `context` to `null` means the default context.
-  find: function (subject, predicate, object, context) {
+  // Setting `graph` to `null` means the default graph.
+  find: function (subject, predicate, object, graph) {
     var prefixes = this._prefixes;
-    return this.findByUri(
+    return this.findByIRI(
       expandPrefixedName(subject,   prefixes),
       expandPrefixedName(predicate, prefixes),
       expandPrefixedName(object,    prefixes),
-      expandPrefixedName(context,   prefixes)
+      expandPrefixedName(graph,     prefixes)
     );
   },
 
-  // ### `findByUri` finds a set of triples matching a pattern.
-  // Setting `subject`, `predicate`, or `object` to `null` means an _anything_ wildcard.
-  // Setting `context` to `null` means the default context.
-  findByUri: function (subject, predicate, object, context) {
-    context = context || this.defaultContext;
-    var contextItem = this._contexts[context], entities = this._entities;
+  // ### `findByIRI` finds a set of triples matching a pattern.
+  // Setting `subject`, `predicate`, or `object` to a falsy value means an _anything_ wildcard.
+  // Setting `graph` to a falsy value means the default graph.
+  findByIRI: function (subject, predicate, object, graph) {
+    graph = graph || '';
+    var graphItem = this._graphs[graph], entities = this._entities;
 
-    // If the specified context contain no triples, there are no results.
-    if (!contextItem) return [];
+    // If the specified graph contain no triples, there are no results.
+    if (!graphItem) return [];
 
-    // Translate URIs to internal index keys.
+    // Translate IRIs to internal index keys.
     // Optimization: if the entity doesn't exist, no triples with it exist.
     if (subject   && !(subject   = entities[subject]))   return [];
     if (predicate && !(predicate = entities[predicate])) return [];
@@ -12099,51 +12732,51 @@ N3Store.prototype = {
     if (subject) {
       if (object)
         // If subject and object are given, the object index will be the fastest.
-        return this._findInIndex(contextItem.objects, object, subject, predicate,
-                                 'object', 'subject', 'predicate', context);
+        return this._findInIndex(graphItem.objects, object, subject, predicate,
+                                 'object', 'subject', 'predicate', graph);
       else
         // If only subject and possibly predicate are given, the subject index will be the fastest.
-        return this._findInIndex(contextItem.subjects, subject, predicate, null,
-                                 'subject', 'predicate', 'object', context);
+        return this._findInIndex(graphItem.subjects, subject, predicate, null,
+                                 'subject', 'predicate', 'object', graph);
     }
     else if (predicate)
       // If only predicate and possibly object are given, the predicate index will be the fastest.
-      return this._findInIndex(contextItem.predicates, predicate, object, null,
-                               'predicate', 'object', 'subject', context);
+      return this._findInIndex(graphItem.predicates, predicate, object, null,
+                               'predicate', 'object', 'subject', graph);
     else if (object)
       // If only object is given, the object index will be the fastest.
-      return this._findInIndex(contextItem.objects, object, null, null,
-                               'object', 'subject', 'predicate', context);
+      return this._findInIndex(graphItem.objects, object, null, null,
+                               'object', 'subject', 'predicate', graph);
     else
       // If nothing is given, iterate subjects and predicates first
-      return this._findInIndex(contextItem.subjects, null, null, null,
-                               'subject', 'predicate', 'object', context);
+      return this._findInIndex(graphItem.subjects, null, null, null,
+                               'subject', 'predicate', 'object', graph);
   },
 
   // ### `count` returns the number of triples matching a pattern, expanding prefixes as necessary.
   // Setting `subject`, `predicate`, or `object` to `null` means an _anything_ wildcard.
-  // Setting `context` to `null` means the default context.
-  count: function (subject, predicate, object, context) {
+  // Setting `graph` to `null` means the default graph.
+  count: function (subject, predicate, object, graph) {
     var prefixes = this._prefixes;
-    return this.countByUri(
+    return this.countByIRI(
       expandPrefixedName(subject,   prefixes),
       expandPrefixedName(predicate, prefixes),
       expandPrefixedName(object,    prefixes),
-      expandPrefixedName(context,   prefixes)
+      expandPrefixedName(graph,     prefixes)
     );
   },
 
-  // ### `countByUri` returns the number of triples matching a pattern.
+  // ### `countByIRI` returns the number of triples matching a pattern.
   // Setting `subject`, `predicate`, or `object` to `null` means an _anything_ wildcard.
-  // Setting `context` to `null` means the default context.
-  countByUri: function (subject, predicate, object, context) {
-    context = context || this.defaultContext;
-    var contextItem = this._contexts[context], entities = this._entities;
+  // Setting `graph` to `null` means the default graph.
+  countByIRI: function (subject, predicate, object, graph) {
+    graph = graph || '';
+    var graphItem = this._graphs[graph], entities = this._entities;
 
-    // If the specified context contain no triples, there are no results.
-    if (!contextItem) return 0;
+    // If the specified graph contain no triples, there are no results.
+    if (!graphItem) return 0;
 
-    // Translate URIs to internal index keys.
+    // Translate IRIs to internal index keys.
     // Optimization: if the entity doesn't exist, no triples with it exist.
     if (subject   && !(subject   = entities[subject]))   return 0;
     if (predicate && !(predicate = entities[predicate])) return 0;
@@ -12153,18 +12786,18 @@ N3Store.prototype = {
     if (subject) {
       if (object)
         // If subject and object are given, the object index will be the fastest.
-        return this._countInIndex(contextItem.objects, object, subject, predicate);
+        return this._countInIndex(graphItem.objects, object, subject, predicate);
       else
         // If only subject and possibly predicate are given, the subject index will be the fastest.
-        return this._countInIndex(contextItem.subjects, subject, predicate, object);
+        return this._countInIndex(graphItem.subjects, subject, predicate, object);
     }
     else if (predicate) {
       // If only predicate and possibly object are given, the predicate index will be the fastest.
-      return this._countInIndex(contextItem.predicates, predicate, object, subject);
+      return this._countInIndex(graphItem.predicates, predicate, object, subject);
     }
     else {
       // If only object is possibly given, the object index will be the fastest.
-      return this._countInIndex(contextItem.objects, object, subject, predicate);
+      return this._countInIndex(graphItem.objects, object, subject, predicate);
     }
   },
 
@@ -12178,9 +12811,7 @@ N3Store.prototype = {
         name = suggestedName + index++;
     }
     else {
-      do {
-        name = '_:b' + this._blankNodeIndex++;
-      }
+      do { name = '_:b' + this._blankNodeIndex++; }
       while (this._entities[name]);
     }
     this._entities[name] = this._entityCount++;
@@ -12193,23 +12824,23 @@ N3Store.prototype = {
 // Export the `N3Store` class as a whole.
 module.exports = N3Store;
 
-},{"./N3Util":39}],37:[function(require,module,exports){
+},{"./N3Util":46}],44:[function(require,module,exports){
 // **N3StreamParser** parses an N3 stream into a triple stream
 var Transform = require('stream').Transform,
     util = require('util'),
     N3Parser = require('./N3Parser.js');
 
 // ## Constructor
-function N3StreamParser(config) {
+function N3StreamParser(options) {
   if (!(this instanceof N3StreamParser))
-    return new N3StreamParser(config);
+    return new N3StreamParser(options);
 
   // Initialize Transform base class
   Transform.call(this, { decodeStrings: true });
   this._readableState.objectMode = true;
 
   // Set up parser
-  var self = this, parser = new N3Parser(config);
+  var self = this, parser = new N3Parser(options);
   parser.parse(
     // Handle triples by pushing them down the pipeline
     function (error, triple) {
@@ -12229,16 +12860,16 @@ util.inherits(N3StreamParser, Transform);
 // Export the `N3StreamParser` class as a whole.
 module.exports = N3StreamParser;
 
-},{"./N3Parser.js":35,"stream":undefined,"util":9}],38:[function(require,module,exports){
+},{"./N3Parser.js":42,"stream":undefined,"util":10}],45:[function(require,module,exports){
 // **N3StreamWriter** serializes a triple stream into an N3 stream
 var Transform = require('stream').Transform,
     util = require('util'),
     N3Writer = require('./N3Writer.js');
 
 // ## Constructor
-function N3StreamWriter(prefixes) {
+function N3StreamWriter(options) {
   if (!(this instanceof N3StreamWriter))
-    return new N3StreamWriter(prefixes);
+    return new N3StreamWriter(options);
 
   // Initialize Transform base class
   Transform.call(this, { encoding: 'utf8' });
@@ -12249,7 +12880,7 @@ function N3StreamWriter(prefixes) {
   var writer = new N3Writer({
     write: function (chunk, encoding, callback) { self.push(chunk); callback && callback(); },
     end: function (callback) { self.push(null); callback && callback(); },
-  }, prefixes);
+  }, options);
 
   // Implement Transform methods on top of writer
   this._transform = function (triple, encoding, done) { writer.addTriple(triple, done); };
@@ -12261,15 +12892,19 @@ util.inherits(N3StreamWriter, Transform);
 // Export the `N3StreamWriter` class as a whole.
 module.exports = N3StreamWriter;
 
-},{"./N3Writer.js":40,"stream":undefined,"util":9}],39:[function(require,module,exports){
+},{"./N3Writer.js":47,"stream":undefined,"util":10}],46:[function(require,module,exports){
 // **N3Util** provides N3 utility functions
 
-var XsdString = 'http://www.w3.org/2001/XMLSchema#string';
+var Xsd = 'http://www.w3.org/2001/XMLSchema#';
+var XsdString  = Xsd + 'string';
+var XsdInteger = Xsd + 'integer';
+var XsdDecimal = Xsd + 'decimal';
+var XsdBoolean = Xsd + 'boolean';
 var RdfLangString = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#langString';
 
 var N3Util = {
-  // Tests whether the given entity (triple object) represents a URI in the N3 library
-  isUri: function (entity) {
+  // Tests whether the given entity (triple object) represents an IRI in the N3 library
+  isIRI: function (entity) {
     if (!entity)
       return entity;
     var firstChar = entity[0];
@@ -12296,7 +12931,7 @@ var N3Util = {
 
   // Gets the type of a literal in the N3 library
   getLiteralType: function (literal) {
-    var match = /^"[^]*"(?:\^\^([^"\^]+)|(@)[^@"]+)?$/.exec(literal);
+    var match = /^"[^]*"(?:\^\^([^"]+)|(@)[^@"]+)?$/.exec(literal);
     if (!match)
       throw new Error(literal + ' is not a literal');
     return match[1] || (match[2] ? RdfLangString : XsdString);
@@ -12304,7 +12939,7 @@ var N3Util = {
 
   // Gets the language of a literal in the N3 library
   getLiteralLanguage: function (literal) {
-    var match = /^"[^]*"(?:@([^@"]+)|\^\^[^"\^]+)?$/.exec(literal);
+    var match = /^"[^]*"(?:@([^@"]+)|\^\^[^"]+)?$/.exec(literal);
     if (!match)
       throw new Error(literal + ' is not a literal');
     return match[1] ? match[1].toLowerCase() : '';
@@ -12315,19 +12950,44 @@ var N3Util = {
     return entity && /^[^:\/"']*:[^:\/"']+$/.test(entity);
   },
 
-  // Expands the prefixed name to a full URI (also when it occurs as a literal's type)
+  // Expands the prefixed name to a full IRI (also when it occurs as a literal's type)
   expandPrefixedName: function (prefixedName, prefixes) {
-    var match = /(?:^|"\^\^)([^:\/#"'\^_]*):[^\/]/.exec(prefixedName);
-    if (!match) return prefixedName;
-
-    var prefix = match[1], base = prefixes[prefix], index = match.index;
+    var match = /(?:^|"\^\^)([^:\/#"'\^_]*):[^\/]*$/.exec(prefixedName), prefix, base, index;
+    if (match)
+      prefix = match[1], base = prefixes[prefix], index = match.index;
     if (base === undefined)
-      throw new Error('Unknown prefix: ' + prefix);
+      return prefixedName;
 
     // The match index is non-zero when expanding a literal's type.
     return index === 0 ? base + prefixedName.substr(prefix.length + 1)
                        : prefixedName.substr(0, index + 3) +
                          base + prefixedName.substr(index + prefix.length + 4);
+  },
+
+  // Creates an IRI in N3.js representation
+  createIRI: function (iri) {
+    return iri && iri[0] === '"' ? N3Util.getLiteralValue(iri) : iri;
+  },
+
+  // Creates a literal in N3.js representation
+  createLiteral: function (value, modifier) {
+    if (!modifier) {
+      switch (typeof value) {
+      case 'boolean':
+        modifier = XsdBoolean;
+        break;
+      case 'number':
+        if (isFinite(value)) {
+          modifier = value % 1 === 0 ? XsdInteger : XsdDecimal;
+          break;
+        }
+      default:
+        return '"' + value + '"';
+      }
+    }
+    return '"' + value +
+           (/^[a-z]+(-[a-z0-9]+)*$/i.test(modifier) ? '"@'  + modifier.toLowerCase()
+                                                    : '"^^' + modifier);
   },
 };
 
@@ -12350,7 +13010,7 @@ function ApplyToThis(f) {
 // Expose N3Util, attaching all functions to it
 module.exports = AddN3Util(AddN3Util);
 
-},{}],40:[function(require,module,exports){
+},{}],47:[function(require,module,exports){
 // **N3Writer** writes N3 documents.
 
 // Matches a literal as represented in memory by the N3 library
@@ -12361,156 +13021,169 @@ var RDF_PREFIX = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#',
     RDF_TYPE   = RDF_PREFIX + 'type';
 
 // Characters in literals that require escaping
-var literalEscape    = /["\\\t\n\r\b\f]/,
-    literalEscapeAll = /["\\\t\n\r\b\f]/g,
-    literalReplacements = { '\\': '\\\\', '"': '\\"', '\t': '\\t',
-                            '\n': '\\n', '\r': '\\r', '\b': '\\b', '\f': '\\f' };
+var escape    = /["\\\t\n\r\b\f\u0000-\u0019\ud800-\udbff]/,
+    escapeAll = /["\\\t\n\r\b\f\u0000-\u0019]|[\ud800-\udbff][\udc00-\udfff]/g,
+    escapeReplacements = { '\\': '\\\\', '"': '\\"', '\t': '\\t',
+                           '\n': '\\n', '\r': '\\r', '\b': '\\b', '\f': '\\f' };
 
 // ## Constructor
-function N3Writer(outputStream, prefixes) {
+function N3Writer(outputStream, options) {
   if (!(this instanceof N3Writer))
-    return new N3Writer(outputStream, prefixes);
+    return new N3Writer(outputStream, options);
 
   // Shift arguments if the first argument is not a stream
   if (outputStream && typeof outputStream.write !== 'function')
-    prefixes = outputStream, outputStream = null;
+    options = outputStream, outputStream = null;
+  options = options || {};
 
   // If no output stream given, send the output as string through the end callback
   if (!outputStream) {
-    outputStream = this;
-    this._output = '';
-    this.write = function (chunk, encoding, callback) {
-      this._output += chunk;
-      callback && callback();
+    var output = '';
+    this._outputStream = {
+      write: function (chunk, encoding, done) { output += chunk; done && done(); },
+      end:   function (done) { done && done(null, output); },
     };
+    this._endStream = true;
+  }
+  else {
+    this._outputStream = outputStream;
+    this._endStream = options.end === undefined ? true : !!options.end;
   }
 
-  this._outputStream = outputStream;
-  this._prefixURIs = Object.create(null);
-  if (prefixes)
-    this.addPrefixes(prefixes);
+  // Initialize writer, depending on the format
+  this._subject = null;
+  if (!(/triple|quad/i).test(options.format)) {
+    this._graph = '';
+    this._prefixIRIs = Object.create(null);
+    options.prefixes && this.addPrefixes(options.prefixes);
+  }
+  else {
+    this._writeTriple = this._writeTripleLine;
+  }
 }
 
 N3Writer.prototype = {
   // ## Private methods
 
-  // ### `_write` writes the arguments to the output stream (last argument is callback)
-  _write: function () {
-    for (var i = 0, l = arguments.length - 2; i <= l; i++)
-      this._outputStream.write(arguments[i], 'utf8', i === l ? arguments[l + 1] : null);
+  // ### `_write` writes the argument to the output stream
+  _write: function (string, callback) {
+    this._outputStream.write(string, 'utf8', callback);
   },
 
-  // ### `_writeUriOrBlankNode` writes a URI or blank node to the output stream
-  _writeUriOrBlankNode: function (uri, done) {
-    // Write blank node
-    if (uri[0] === '_' && uri[1] === ':')
-      return this._write(uri, done);
-
-    // Write prefixed name if possible
-    var prefixMatch = this._prefixRegex.exec(uri);
-    if (prefixMatch)
-      this._write(this._prefixURIs[prefixMatch[1]], prefixMatch[2], done);
-    // Otherwise, just write the URI
-    else
-      this._write('<', uri, '>', done);
-  },
-
-  // ### `_writeLiteral` writes a literal to the output stream
-  _writeLiteral: function (value, type, language, done) {
-    // Escape the literal if necessary
-    if (literalEscape.test(value)) {
-      value = value.replace(literalEscapeAll, function (match) {
-        return literalReplacements[match];
-      });
+    // ### `_writeTriple` writes the triple to the output stream
+  _writeTriple: function (subject, predicate, object, graph, done) {
+    try {
+      // Write the graph's label if it has changed
+      if (this._graph !== graph) {
+        // Close the previous graph and start the new one
+        this._write((this._subject === null ? '' : (this._graph ? '\n}\n' : '.\n')) +
+                    (graph ? this._encodeIriOrBlankNode(graph) + ' {\n' : ''));
+        this._graph = graph, this._subject = null;
+      }
+      // Don't repeat the subject if it's the same
+      if (this._subject === subject) {
+        // Don't repeat the predicate if it's the same
+        if (this._predicate === predicate)
+          this._write(', ' + this._encodeObject(object), done);
+        // Same subject, different predicate
+        else
+          this._write(';\n    ' +
+                      this._encodePredicate(this._predicate = predicate) + ' ' +
+                      this._encodeObject(object), done);
+      }
+      // Different subject; write the whole triple
+      else
+        this._write((this._subject === null ? '' : '.\n') +
+                    this._encodeSubject(this._subject = subject) + ' ' +
+                    this._encodePredicate(this._predicate = predicate) + ' ' +
+                    this._encodeObject(object), done);
     }
+    catch (error) { done && done(error); }
+  },
 
+  // ### `_writeTripleLine` writes the triple or quad to the output stream as a single line
+  _writeTripleLine: function (subject, predicate, object, graph, done) {
+    // Don't use prefixes
+    delete this._prefixMatch;
+    // Write the triple
+    try {
+      this._write(this._encodeIriOrBlankNode(subject) + ' ' +
+                  this._encodeIriOrBlankNode(predicate) + ' ' +
+                  this._encodeObject(object) +
+                  (graph ? ' ' + this._encodeIriOrBlankNode(graph) + '.\n' : '.\n'), done);
+    }
+    catch (error) { done && done(error); }
+  },
+
+  // ### `_encodeIriOrBlankNode` represents an IRI or blank node
+  _encodeIriOrBlankNode: function (iri) {
+    // A blank node is represented as-is
+    if (iri[0] === '_' && iri[1] === ':') return iri;
+    // Escape special characters
+    if (escape.test(iri))
+      iri = iri.replace(escapeAll, characterReplacer);
+    // Try to represent the IRI as prefixed name
+    var prefixMatch = this._prefixRegex.exec(iri);
+    return !prefixMatch ? '<' + iri + '>' :
+           (!prefixMatch[1] ? iri : this._prefixIRIs[prefixMatch[1]] + prefixMatch[2]);
+  },
+
+  // ### `_encodeLiteral` represents a literal
+  _encodeLiteral: function (value, type, language) {
+    // Escape special characters
+    if (escape.test(value))
+      value = value.replace(escapeAll, characterReplacer);
     // Write the literal, possibly with type or language
-    this._write('"', value, '"', type || language ? null : done);
-    if (type) {
-      this._write('^^', null);
-      this._writeUriOrBlankNode(type, done);
-    }
-    else if (language) {
-      this._write('@', language, done);
-    }
+    if (language)
+      return '"' + value + '"@' + language;
+    else if (type)
+      return '"' + value + '"^^' + this._encodeIriOrBlankNode(type);
+    else
+      return '"' + value + '"';
   },
 
-  // ### `_writeSubject` writes a subject to the output stream
-  _writeSubject: function (subject, done) {
+  // ### `_encodeSubject` represents a subject
+  _encodeSubject: function (subject) {
     if (subject[0] === '"')
       throw new Error('A literal as subject is not allowed: ' + subject);
-    this._writeUriOrBlankNode(subject, done);
+    return this._encodeIriOrBlankNode(subject);
   },
 
-  // ### `_writePredicate` writes a predicate to the output stream
-  _writePredicate: function (predicate, done) {
+  // ### `_encodePredicate` represents a predicate
+  _encodePredicate: function (predicate) {
     if (predicate[0] === '"')
       throw new Error('A literal as predicate is not allowed: ' + predicate);
-    if (predicate === RDF_TYPE)
-      this._write('a', done);
-    else
-      this._writeUriOrBlankNode(predicate, done);
+    return predicate === RDF_TYPE ? 'a' : this._encodeIriOrBlankNode(predicate);
   },
 
-  // ### `_writeObject` writes an object to the output stream
-  _writeObject: function (object, done) {
-    var literalMatch = N3LiteralMatcher.exec(object);
-    if (literalMatch !== null)
-      this._writeLiteral(literalMatch[1], literalMatch[2], literalMatch[3], done);
-    else
-      this._writeUriOrBlankNode(object, done);
+  // ### `_encodeObject` represents an object
+  _encodeObject: function (object) {
+    // Represent an IRI or blank node
+    if (object[0] !== '"')
+      return this._encodeIriOrBlankNode(object);
+    // Represent a literal
+    var match = N3LiteralMatcher.exec(object);
+    if (!match) throw new Error('Invalid literal: ' + object);
+    return this._encodeLiteral(match[1], match[2], match[3]);
   },
 
-  // ### `_blockedWrite` replaces `_writer_ after the writer has been closed
+  // ### `_blockedWrite` replaces `_write` after the writer has been closed
   _blockedWrite: function () {
     throw new Error('Cannot write because the writer has been closed.');
   },
 
   // ### `addTriple` adds the triple to the output stream
-  addTriple: function (subject, predicate, object, done) {
-    // If the triple was given as a triple object, shift parameters
-    if (!object) {
-      done = predicate;
-      object = subject.object;
-      predicate = subject.predicate;
-      subject = subject.subject;
-    }
-    // Write the triple
-    try {
-      // Don't repeat the subject if it's the same
-      if (this._prevSubject === subject) {
-        // Don't repeat the predicate if it's the same
-        if (this._prevPredicate === predicate) {
-          this._write(', ', null);
-        }
-        // Same subject, different predicate
-        else {
-          this._write(';\n    ', null);
-          this._writePredicate(predicate);
-          this._write(' ', null);
-
-          this._prevPredicate = predicate;
-        }
-      }
-      // Different subject; write the whole triple
-      else {
-        // End a possible previous triple
-        if ('_prevSubject' in this)
-          this._write('.\n', null);
-        this._writeSubject(subject);
-        this._write(' ', null);
-        this._writePredicate(predicate);
-        this._write(' ', null);
-
-        this._prevSubject = subject;
-        this._prevPredicate = predicate;
-      }
-      // In all cases, write the object
-      this._writeObject(object, done);
-    }
-    catch (error) {
-      done && done(error);
-    }
+  addTriple: function (subject, predicate, object, graph, done) {
+    // The triple was given as a triple object, so shift parameters
+    if (typeof object !== 'string')
+      this._writeTriple(subject.subject, subject.predicate, subject.object,
+                        subject.graph || '', predicate);
+    // The optional `graph` parameter was not provided
+    else if (typeof graph !== 'string')
+      this._writeTriple(subject, predicate, object, '', graph);
+    // The `graph` parameter was provided
+    else
+      this._writeTriple(subject, predicate, object, graph, done);
   },
 
   // ### `addTriples` adds the triples to the output stream
@@ -12520,75 +13193,95 @@ N3Writer.prototype = {
   },
 
   // ### `addPrefix` adds the prefix to the output stream
-  addPrefix: function (prefix, uri, done) {
+  addPrefix: function (prefix, iri, done) {
     var prefixes = {};
-    prefixes[prefix] = uri;
+    prefixes[prefix] = iri;
     this.addPrefixes(prefixes, done);
   },
 
   // ### `addPrefixes` adds the prefixes to the output stream
   addPrefixes: function (prefixes, done) {
     // Add all useful prefixes
-    var hasPrefixes = false;
+    var prefixIRIs = this._prefixIRIs, hasPrefixes = false;
     for (var prefix in prefixes) {
       // Verify whether the prefix can be used and does not exist yet
-      var uri = prefixes[prefix];
-      if (/[#\/]$/.test(uri) && this._prefixURIs[uri] !== (prefix += ':')) {
+      var iri = prefixes[prefix];
+      if (/[#\/]$/.test(iri) && prefixIRIs[iri] !== (prefix += ':')) {
         hasPrefixes = true;
-        this._prefixURIs[uri] = prefix;
+        prefixIRIs[iri] = prefix;
         // Finish a possible pending triple
-        if ('_prevSubject' in this) {
-          this._write('.\n', null);
-          delete this._prevSubject;
+        if (this._subject !== null) {
+          this._write(this._graph ? '\n}\n' : '.\n');
+          this._subject = null, this._graph = '';
         }
         // Write prefix
-        this._write('@prefix ', prefix, ' <', uri, '>.\n', null);
+        this._write('@prefix ' + prefix + ' <' + iri + '>.\n');
       }
     }
     // Recreate the prefix matcher
     if (hasPrefixes) {
-      var prefixURIs = '';
-      for (var prefixURI in this._prefixURIs)
-        prefixURIs += prefixURIs ? '|' + prefixURI : prefixURI;
-      prefixURIs = prefixURIs.replace(/[\]\/\(\)\*\+\?\.\\\$]/g, '\\$&');
-      this._prefixRegex = new RegExp('^(' + prefixURIs + ')([a-zA-Z][\\-_a-zA-Z0-9]*)$');
+      var IRIlist = '', prefixList = '';
+      for (var prefixIRI in prefixIRIs) {
+        IRIlist += IRIlist ? '|' + prefixIRI : prefixIRI;
+        prefixList += (prefixList ? '|' : '') + prefixIRIs[prefixIRI];
+      }
+      IRIlist = IRIlist.replace(/[\]\/\(\)\*\+\?\.\\\$]/g, '\\$&');
+      this._prefixRegex = new RegExp('^(?:' + prefixList + ')[^\/]*$|' +
+                                     '^(' + IRIlist + ')([a-zA-Z][\\-_a-zA-Z0-9]*)$');
     }
     // End a prefix block with a newline
     this._write(hasPrefixes ? '\n' : '', done);
   },
 
-  // ### `_prefixRegex` matches an URL that begins with one of the added prefixes
-  _prefixRegex: { exec: function () { return null; } },
+  // ### `_prefixRegex` matches a prefixed name or IRI that begins with one of the added prefixes
+  _prefixRegex: /$0^/,
 
   // ### `end` signals the end of the output stream
   end: function (done) {
     // Finish a possible pending triple
-    if ('_prevSubject' in this) {
-      this._write('.\n', null);
-      delete this._prevSubject;
+    if (this._subject !== null) {
+      this._write(this._graph ? '\n}\n' : '.\n');
+      this._subject = null;
     }
     // Disallow further writing
     this._write = this._blockedWrite;
 
-    // If writing to a string instead of an actual stream, send the string
-    if (this === this._outputStream)
-      return done && done(null, this._output);
-
     // Try to end the underlying stream, ensuring done is called exactly one time
-    var singleDone = done && function () { singleDone = null, done(); };
-    // Ending a stream can error
-    try { this._outputStream.end(singleDone); }
-    // Execute the callback if it hasn't been executed
-    catch (error) { singleDone && singleDone(); }
+    var singleDone = done && function (error, result) { singleDone = null, done(error, result); };
+    if (this._endStream) {
+      try { return this._outputStream.end(singleDone); }
+      catch (error) { /* error closing stream */ }
+    }
+    singleDone && singleDone();
   },
 };
+
+// Replaces a character by its escaped version
+function characterReplacer(character) {
+  // Replace a single character by its escaped version
+  var result = escapeReplacements[character];
+  if (result === undefined) {
+    // Replace a single character with its 4-bit unicode escape sequence
+    if (character.length === 1) {
+      result = character.charCodeAt(0).toString(16);
+      result = '\\u0000'.substr(0, 6 - result.length) + result;
+    }
+    // Replace a surrogate pair with its 8-bit unicode escape sequence
+    else {
+      result = ((character.charCodeAt(0) - 0xD800) * 0x400 +
+                 character.charCodeAt(1) + 0x2400).toString(16);
+      result = '\\U00000000'.substr(0, 10 - result.length) + result;
+    }
+  }
+  return result;
+}
 
 // ## Exports
 
 // Export the `N3Writer` class as a whole.
 module.exports = N3Writer;
 
-},{}],41:[function(require,module,exports){
+},{}],48:[function(require,module,exports){
 (function (process){
 (function (global, undefined) {
     "use strict";
@@ -12767,9 +13460,269 @@ module.exports = N3Writer;
 }(new Function("return this")()));
 
 }).call(this,require('_process'))
-},{"_process":7}],42:[function(require,module,exports){
+},{"_process":8}],49:[function(require,module,exports){
+var XSD_INTEGER = 'http://www.w3.org/2001/XMLSchema#integer';
+
+module.exports = function SparqlGenerator() { return { stringify: toQuery }; };
+
+// Converts the parsed query object into a SPARQL query
+function toQuery(q) {
+  var query = '';
+  for (var key in q.prefixes)
+    query += 'PREFIX ' + key + ': <' + q.prefixes[key] + '>\n';
+
+  if (q.queryType)
+    query += q.queryType.toUpperCase() + ' ';
+  if (q.reduced)
+    query += 'REDUCED ';
+  if (q.distinct)
+    query += 'DISTINCT ';
+
+  if (q.variables)
+    query += mapJoin(q.variables, function (variable) {
+      return isString(variable) ? toEntity(variable) :
+             '(' + toExpression(variable.expression) + ' AS ' + variable.variable + ')';
+    }) + ' ';
+  else if (q.template)
+    query += patterns.group(q.template, true) + '\n';
+
+  if (q.from)
+    query += mapJoin(q.from.default || [], function (g) { return 'FROM ' + toEntity(g) + '\n'; }, '') +
+             mapJoin(q.from.named || [], function (g) { return 'FROM NAMED ' + toEntity(g) + '\n'; }, '');
+  if (q.where)
+    query += 'WHERE ' + patterns.group(q.where, true)  + '\n';
+
+  if (q.updates)
+    query += mapJoin(q.updates, toUpdate, ';\n');
+  else if (q.values)
+    query += patterns.values(q);
+
+  if (q.order)
+    query += 'ORDER BY ' + mapJoin(q.order, function (it) {
+      var expr = toExpression(it.expression);
+      return !it.descending ? expr : 'DESC(' + expr + ')';
+    }) + '\n';
+  if (q.group)
+    query += 'GROUP BY ' + mapJoin(q.group, function (it) {
+      return isString(it.expression) ? it.expression : '(' + toExpression(it.expression) + ')';
+    }) + '\n';
+  if (q.having)
+    query += 'HAVING (' + mapJoin(q.having, toExpression) + ')\n';
+
+  if (q.offset)
+    query += 'OFFSET ' + q.offset + '\n';
+  if (q.limit)
+    query += 'LIMIT ' + q.limit + '\n';
+  return query.trim();
+}
+
+// Converts the parsed SPARQL pattern into a SPARQL pattern
+function toPattern(pattern) {
+  var type = pattern.type || (pattern instanceof Array) && 'array' ||
+             (pattern.subject && pattern.predicate && pattern.object ? 'triple' : '');
+  if (!(type in patterns))
+    throw new Error('Unknown entry type: ' + type);
+  return patterns[type](pattern);
+}
+var patterns = {
+  triple: function (t) {
+    return toEntity(t.subject) + ' ' + toEntity(t.predicate) + ' ' + toEntity(t.object) + '.';
+  },
+  array: function (items) {
+    return mapJoin(items, toPattern, '\n');
+  },
+  bgp: function (bgp) {
+    return mapJoin(bgp.triples, patterns.triple, '\n');
+  },
+  graph: function (graph) {
+    return 'GRAPH ' + toEntity(graph.name) + ' ' + patterns.group(graph);
+  },
+  group: function (group, inline) {
+    group = inline !== true ? patterns.array(group.patterns || group.triples)
+                            : toPattern(group.type !== 'group' ? group : group.patterns);
+    return group.indexOf('\n') === -1 ? '{ ' + group + ' }' : '{\n' + indent(group) + '\n}';
+  },
+  query: function (query) {
+    return '{\n' + indent(toQuery(query)) + '\n}';
+  },
+  filter: function (filter) {
+    return 'FILTER(' + toExpression(filter.expression) + ')';
+  },
+  bind: function (bind) {
+    return 'BIND(' + toExpression(bind.expression) + ' AS ' + bind.variable + ')';
+  },
+  optional: function (optional) {
+    return 'OPTIONAL ' + patterns.group(optional);
+  },
+  union: function (union) {
+    return mapJoin(union.patterns, function (p) { return patterns.group(p, true); }, '\nUNION\n');
+  },
+  minus: function (minus) {
+    return 'MINUS ' + patterns.group(minus);
+  },
+  values: function (valuesList) {
+    // Gather unique keys
+    var keys = Object.keys(valuesList.values.reduce(function (keyHash, values) {
+      for (var key in values) keyHash[key] = true;
+      return keyHash;
+    }, {}));
+    // Create value rows
+    return 'VALUES (' + keys.join(' ') + ') {\n' +
+      mapJoin(valuesList.values, function (values) {
+        return '  (' + mapJoin(keys, function (key) {
+          return values[key] !== undefined ? toEntity(values[key]) : 'UNDEF';
+        }) + ')';
+      }, '\n') + '\n}';
+  },
+  service: function (service) {
+    return 'SERVICE ' + (service.silent ? 'SILENT ' : '') + toEntity(service.name) + ' ' +
+           patterns.group(service);
+  },
+};
+
+// Converts the parsed expression object into a SPARQL expression
+function toExpression(expr) {
+  if (isString(expr))
+    return toEntity(expr);
+
+  switch (expr.type.toLowerCase()) {
+    case 'aggregate':
+      return expr.aggregation.toUpperCase() +
+             '(' + (expr.distinct ? 'DISTINCT ' : '') + toExpression(expr.expression) +
+             (expr.separator ? '; SEPARATOR = ' + toEntity('"' + expr.separator + '"') : '') + ')';
+    case 'functioncall':
+      return toEntity(expr.function) + '(' + mapJoin(expr.args, toExpression, ', ') + ')';
+    case 'operation':
+      var operator = expr.operator.toUpperCase(), args = expr.args || [], arg = args[0];
+      switch (expr.operator.toLowerCase()) {
+      // Infix operators
+      case '<':
+      case '>':
+      case '>=':
+      case '<=':
+      case '&&':
+      case '||':
+      case '=':
+      case '!=':
+      case '+':
+      case '-':
+      case '*':
+      case '/':
+        return mapJoin(args, function (arg) {
+          return isString(arg) ? toEntity(arg) : '(' + toExpression(arg) + ')';
+        }, ' ' + operator + ' ');
+      // Unary operators
+      case '!':
+        return '!' + toExpression(arg);
+      // IN and NOT IN
+      case 'notin':
+        operator = 'NOT IN';
+      case 'in':
+        return toExpression(arg) + ' ' + operator +
+               '(' + (isString(arg = args[1]) ? arg : mapJoin(arg, toExpression, ', ')) + ')';
+      // EXISTS and NOT EXISTS
+      case 'notexists':
+        operator = 'NOT EXISTS';
+      case 'exists':
+        return operator + ' ' + patterns.group(arg, true);
+      // Other expressions
+      default:
+        return operator + '(' + mapJoin(args, toExpression, ', ') + ')';
+      }
+    default:
+      throw new Error('Unknown expression type: ' + expr.type);
+  }
+}
+
+// Converts the parsed entity (or property path) into a SPARQL entity
+function toEntity(value) {
+  // regular entity
+  if (isString(value)) {
+    switch (value[0]) {
+    // variable, * selector, or blank node
+    case '?':
+    case '$':
+    case '*':
+    case '_':
+      return value;
+    // literal
+    case '"':
+      var match = value.match(/^"(.*)"(?:(@.+)|\^\^(.+))?$/) || {},
+          lexical = match[1] || '', language = match[2] || '', datatype = match[3];
+      value = '"' + lexical.replace(escape, escapeReplacer) + '"' + language;
+      if (datatype) {
+        if (datatype === XSD_INTEGER && /^\d+$/.test(lexical)) return lexical;
+        value += '^^<' + datatype + '>';
+      }
+      return value;
+    // IRI
+    default:
+      return '<' + value + '>';
+    }
+  }
+  // property path
+  else {
+    var items = value.items.map(toEntity), path = value.pathType;
+    switch (path) {
+    // prefix operator
+    case '^':
+    case '!':
+      return path + items[0];
+    // postfix operator
+    case '*':
+    case '+':
+    case '?':
+      return items[0] + path;
+    // infix operator
+    default:
+      return '(' + items.join(path) + ')';
+    }
+  }
+}
+var escape = /["\\\t\n\r\b\f]/g,
+    escapeReplacer = function (c) { return escapeReplacements[c]; },
+    escapeReplacements = { '\\': '\\\\', '"': '\\"', '\t': '\\t',
+                           '\n': '\\n', '\r': '\\r', '\b': '\\b', '\f': '\\f' };
+
+// Converts the parsed update object into a SPARQL update clause
+function toUpdate(update) {
+  switch (update.type || update.updateType) {
+  case 'load':
+    return 'LOAD' + (update.source ? ' ' + toEntity(update.source) : '') +
+           (update.destination ? ' INTO GRAPH ' + toEntity(update.destination) : '');
+  case 'insert':
+    return 'INSERT DATA '  + patterns.group(update.insert, true);
+  case 'delete':
+    return 'DELETE DATA '  + patterns.group(update.delete, true);
+  case 'deletewhere':
+    return 'DELETE WHERE ' + patterns.group(update.delete, true);
+  case 'insertdelete':
+    return (update.graph ? 'WITH ' + toEntity(update.graph) + '\n' : '') +
+           (update.delete.length ? 'DELETE ' + patterns.group(update.delete, true) + '\n' : '') +
+           (update.insert.length ? 'INSERT ' + patterns.group(update.insert, true) + '\n' : '') +
+           'WHERE ' + patterns.group(update.where, true);
+  case 'add':
+  case 'copy':
+  case 'move':
+    return update.type.toUpperCase() + (update.source.default ? ' DEFAULT ' : ' ') +
+           'TO ' + toEntity(update.destination.name);
+  default:
+    throw new Error('Unknown update query type: ' + update.type);
+  }
+}
+
+// Checks whether the object is a string
+function isString(object) { return typeof object === 'string'; }
+
+// Maps the array with the given function, and joins the results using the separator
+function mapJoin(array, func, sep) { return array.map(func).join(isString(sep) ? sep : ' '); }
+
+// Indents each line of the string
+function indent(text) { return text.replace(/^/gm, '  '); }
+
+},{}],50:[function(require,module,exports){
 (function (process){
-/* parser generated by jison 0.4.14 */
+/* parser generated by jison 0.4.15 */
 /*
   Returns a Parser object of the following structure:
 
@@ -12843,12 +13796,12 @@ module.exports = N3Writer;
   }
 */
 var parser = (function(){
-var o=function(k,v,o,l){for(o=o||{},l=k.length;l--;o[k[l]]=v);return o},V0=[11,14,23,33,42,47,95,105,108,110,111,120,121,126,285,286,287,288,289],V1=[95,105,108,110,111,120,121,126,285,286,287,288,289],V2=[1,21],V3=[1,25],V4=[6,82],V5=[37,38,50],V6=[37,50],V7=[1,55],V8=[1,57],V9=[1,53],Va=[1,56],Vb=[27,28,280],Vc=[12,15,274],Vd=[107,129,283,290],Ve=[12,15,107,129,274],Vf=[1,76],Vg=[1,80],Vh=[1,82],Vi=[107,129,283,284,290],Vj=[12,15,107,129,274,284],Vk=[1,89],Vl=[2,228],Vm=[1,88],Vn=[12,15,27,28,79,163,210,213,214,260,261,262,263,264,265,266,267,268,269,270,271,272,273,274],Vo=[6,37,38,50,60,67,70,78,80,82],Vp=[6,12,15,27,37,38,50,60,67,70,78,80,82,274],Vq=[6,12,15,27,28,30,31,37,38,40,50,60,67,70,78,79,80,82,89,104,107,120,121,123,128,155,156,158,161,162,163,181,192,203,208,210,211,213,214,222,237,242,260,261,262,263,264,265,266,267,268,269,270,271,272,273,274,280,291,294,295,297,298,299,300,301,302,303,304,305,306,307],Vr=[1,104],Vs=[1,105],Vt=[6,12,15,27,28,38,40,79,82,107,155,156,158,161,162,163,210,213,214,260,261,262,263,264,265,266,267,268,269,270,271,272,273,274,291],Vu=[27,31],Vv=[2,283],Vw=[1,118],Vx=[1,116],Vy=[6,192],Vz=[2,300],VA=[2,288],VB=[37,123],VC=[6,40,67,70,78,80,82],VD=[2,230],VE=[1,132],VF=[1,134],VG=[1,144],VH=[1,150],VI=[1,153],VJ=[1,149],VK=[1,151],VL=[1,147],VM=[1,148],VN=[1,154],VO=[1,155],VP=[1,158],VQ=[1,159],VR=[1,160],VS=[1,161],VT=[1,162],VU=[1,163],VV=[1,164],VW=[1,165],VX=[1,166],VY=[1,167],VZ=[1,168],V_=[1,169],V$=[6,60,67,70,78,80,82],V01=[27,28,37,38,50],V11=[12,15,27,28,79,203,237,239,240,241,243,245,246,248,249,252,254,260,261,262,263,264,265,266,267,268,269,270,271,272,273,274,298,307,308,309,310,311,312],V21=[2,373],V31=[12,15,40,79,89,260,261,262,263,264,265,266,267,268,269,270,271,272,273,274],V41=[6,104,192],V51=[40,107],V61=[6,40,70,78,80,82],V71=[2,312],V81=[2,304],V91=[12,15,27,181,274],Va1=[2,340],Vb1=[2,336],Vc1=[12,15,27,28,31,38,40,79,82,107,155,156,158,161,162,163,181,192,203,208,210,211,213,214,242,260,261,262,263,264,265,266,267,268,269,270,271,272,273,274,291],Vd1=[12,15,27,28,30,31,38,40,79,82,89,107,155,156,158,161,162,163,181,192,203,208,210,211,213,214,222,237,242,260,261,262,263,264,265,266,267,268,269,270,271,272,273,274,280,291,295,298,299,300,301,302,303,304,305,306,307],Ve1=[12,15,27,28,30,31,38,40,79,82,89,107,155,156,158,161,162,163,181,192,203,208,210,211,213,214,222,237,242,258,259,260,261,262,263,264,265,266,267,268,269,270,271,272,273,274,280,291,295,298,299,300,301,302,303,304,305,306,307],Vf1=[1,227],Vg1=[1,238],Vh1=[6,40,78,80,82],Vi1=[1,249],Vj1=[1,251],Vk1=[1,252],Vl1=[1,253],Vm1=[1,254],Vn1=[1,256],Vo1=[1,257],Vp1=[2,404],Vq1=[1,260],Vr1=[1,261],Vs1=[1,262],Vt1=[1,268],Vu1=[1,263],Vv1=[1,264],Vw1=[1,265],Vx1=[1,266],Vy1=[1,267],Vz1=[1,274],VA1=[1,273],VB1=[38,40,82,107,155,156,158,161,162],VC1=[1,282],VD1=[1,283],VE1=[40,107,291],VF1=[12,15,27,28,31,79,163,210,213,214,260,261,262,263,264,265,266,267,268,269,270,271,272,273,274],VG1=[12,15,27,28,31,38,40,79,82,107,155,156,158,161,162,163,192,210,211,213,214,242,260,261,262,263,264,265,266,267,268,269,270,271,272,273,274,291],VH1=[12,15,27,28,79,239,240,241,243,245,246,248,249,252,254,260,261,262,263,264,265,266,267,268,269,270,271,272,273,274,307,308,309,310,311,312],VI1=[2,397],VJ1=[1,301],VK1=[1,302],VL1=[1,303],VM1=[12,15,31,40,79,89,260,261,262,263,264,265,266,267,268,269,270,271,272,273,274],VN1=[28,40],VO1=[2,303],VP1=[6,40,82],VQ1=[6,12,15,28,40,70,78,80,82,239,240,241,243,245,246,248,249,252,254,274,307,308,309,310,311,312],VR1=[6,12,15,27,28,38,40,70,73,75,78,79,80,82,107,155,156,158,161,162,163,210,213,214,239,240,241,243,245,246,248,249,252,254,260,261,262,263,264,265,266,267,268,269,270,271,272,273,274,291,307,308,309,310,311,312],VS1=[6,12,15,27,28,30,31,38,40,67,70,73,75,78,79,80,82,107,155,156,158,161,162,163,192,210,213,214,222,237,239,240,241,242,243,245,246,248,249,252,254,260,261,262,263,264,265,266,267,268,269,270,271,272,273,274,280,291,295,298,299,300,301,302,303,304,305,306,307,308,309,310,311,312],VT1=[1,326],VU1=[1,325],VV1=[1,332],VW1=[1,331],VX1=[28,163],VY1=[6,12,15,27,28,40,67,70,78,80,82,239,240,241,243,245,246,248,249,252,254,274,307,308,309,310,311,312],VZ1=[6,12,15,27,28,30,31,38,40,60,67,70,73,75,78,79,80,82,107,155,156,158,161,162,163,192,210,213,214,222,237,239,240,241,242,243,245,246,248,249,252,254,260,261,262,263,264,265,266,267,268,269,270,271,272,273,274,280,291,292,295,298,299,300,301,302,303,304,305,306,307,308,309,310,311,312],V_1=[12,15,28,181,203,208,274],V$1=[2,354],V02=[1,354],V12=[38,40,82,107,155,156,158,161,162,291],V22=[2,342],V32=[12,15,27,28,31,38,40,79,82,107,155,156,158,161,162,163,181,192,210,211,213,214,242,260,261,262,263,264,265,266,267,268,269,270,271,272,273,274,291],V42=[30,31,192,242,299,300],V52=[30,31,192,222,237,242,268,269,270,271,272,273,298,299,300,301,302,303,304,305,306,307],V62=[30,31,192,222,237,242,268,269,270,271,272,273,280,295,298,299,300,301,302,303,304,305,306,307],V72=[1,387],V82=[1,402],V92=[1,399],Va2=[1,400],Vb2=[12,15,27,28,79,203,237,239,240,241,243,245,246,248,249,252,254,260,261,262,263,264,265,266,267,268,269,270,271,272,273,274,280,298,307,308,309,310,311,312],Vc2=[12,15,27,28,38,40,79,82,107,155,156,158,161,162,163,210,213,214,260,261,262,263,264,265,266,267,268,269,270,271,272,273,274],Vd2=[12,15,27,274],Ve2=[12,15,27,28,38,40,79,82,107,155,156,158,161,162,163,210,213,214,260,261,262,263,264,265,266,267,268,269,270,271,272,273,274,291],Vf2=[2,315],Vg2=[12,15,27,181,192,274],Vh2=[1,453],Vi2=[1,454],Vj2=[12,15,31,79,89,260,261,262,263,264,265,266,267,268,269,270,271,272,273,274],Vk2=[6,12,15,27,28,40,73,75,78,80,82,239,240,241,243,245,246,248,249,252,254,274,307,308,309,310,311,312],Vl2=[2,310],Vm2=[12,15,28,181,203,274],Vn2=[38,40,82,107,155,156,158,161,162,192,211,291],Vo2=[12,15,27,28,40,79,107,163,210,213,214,260,261,262,263,264,265,266,267,268,269,270,271,272,273,274],Vp2=[12,15,27,28,31,79,163,210,213,214,260,261,262,263,264,265,266,267,268,269,270,271,272,273,274,294,295],Vq2=[12,15,27,28,31,79,163,210,213,214,260,261,262,263,264,265,266,267,268,269,270,271,272,273,274,280,294,295,297,298],Vr2=[1,544],Vs2=[1,545],Vt2=[2,298],Vu2=[12,15,31,181,208,274];
+var o=function(k,v,o,l){for(o=o||{},l=k.length;l--;o[k[l]]=v);return o},$V0=[11,14,23,33,42,47,95,105,108,110,111,120,121,126,288,289,290,291,292],$V1=[95,105,108,110,111,120,121,126,288,289,290,291,292],$V2=[1,21],$V3=[1,25],$V4=[6,82],$V5=[37,38,50],$V6=[37,50],$V7=[1,55],$V8=[1,57],$V9=[1,53],$Va=[1,56],$Vb=[27,28,283],$Vc=[12,15,277],$Vd=[107,129,286,293],$Ve=[12,15,107,129,277],$Vf=[1,76],$Vg=[1,80],$Vh=[1,82],$Vi=[107,129,286,287,293],$Vj=[12,15,107,129,277,287],$Vk=[1,89],$Vl=[2,229],$Vm=[1,88],$Vn=[12,15,27,28,79,163,210,213,214,263,264,265,266,267,268,269,270,271,272,273,274,275,276,277],$Vo=[6,37,38,50,60,67,70,78,80,82],$Vp=[6,12,15,27,37,38,50,60,67,70,78,80,82,277],$Vq=[6,12,15,27,28,30,31,37,38,40,50,60,67,70,78,79,80,82,89,104,107,120,121,123,128,155,156,158,161,162,163,181,192,203,208,210,211,213,214,222,237,242,259,263,264,265,266,267,268,269,270,271,272,273,274,275,276,277,283,294,297,298,300,301,302,303,304,305,306,307,308,309],$Vr=[1,104],$Vs=[1,105],$Vt=[6,12,15,27,28,38,40,79,82,107,155,156,158,161,162,163,210,213,214,263,264,265,266,267,268,269,270,271,272,273,274,275,276,277,294],$Vu=[27,31],$Vv=[2,284],$Vw=[1,118],$Vx=[1,116],$Vy=[6,192],$Vz=[2,301],$VA=[2,289],$VB=[37,123],$VC=[6,40,67,70,78,80,82],$VD=[2,231],$VE=[1,132],$VF=[1,134],$VG=[1,144],$VH=[1,150],$VI=[1,153],$VJ=[1,149],$VK=[1,151],$VL=[1,147],$VM=[1,148],$VN=[1,154],$VO=[1,155],$VP=[1,158],$VQ=[1,159],$VR=[1,160],$VS=[1,161],$VT=[1,162],$VU=[1,163],$VV=[1,164],$VW=[1,165],$VX=[1,166],$VY=[1,167],$VZ=[1,168],$V_=[1,169],$V$=[6,60,67,70,78,80,82],$V01=[27,28,37,38,50],$V11=[12,15,27,28,79,203,237,239,240,241,243,245,246,248,249,252,254,263,264,265,266,267,268,269,270,271,272,273,274,275,276,277,301,309,310,311,312,313,314],$V21=[2,374],$V31=[12,15,40,79,89,263,264,265,266,267,268,269,270,271,272,273,274,275,276,277],$V41=[6,104,192],$V51=[40,107],$V61=[6,40,70,78,80,82],$V71=[2,313],$V81=[2,305],$V91=[12,15,27,181,277],$Va1=[2,341],$Vb1=[2,337],$Vc1=[12,15,27,28,31,38,40,79,82,107,155,156,158,161,162,163,181,192,203,208,210,211,213,214,242,263,264,265,266,267,268,269,270,271,272,273,274,275,276,277,294],$Vd1=[12,15,27,28,30,31,38,40,79,82,89,107,155,156,158,161,162,163,181,192,203,208,210,211,213,214,222,237,242,259,263,264,265,266,267,268,269,270,271,272,273,274,275,276,277,283,294,298,301,302,303,304,305,306,307,308,309],$Ve1=[12,15,27,28,30,31,38,40,79,82,89,107,155,156,158,161,162,163,181,192,203,208,210,211,213,214,222,237,242,259,261,262,263,264,265,266,267,268,269,270,271,272,273,274,275,276,277,283,294,298,301,302,303,304,305,306,307,308,309],$Vf1=[1,227],$Vg1=[1,238],$Vh1=[6,40,78,80,82],$Vi1=[1,249],$Vj1=[1,251],$Vk1=[1,252],$Vl1=[1,253],$Vm1=[1,254],$Vn1=[1,256],$Vo1=[1,257],$Vp1=[2,405],$Vq1=[1,260],$Vr1=[1,261],$Vs1=[1,262],$Vt1=[1,268],$Vu1=[1,263],$Vv1=[1,264],$Vw1=[1,265],$Vx1=[1,266],$Vy1=[1,267],$Vz1=[1,274],$VA1=[1,273],$VB1=[38,40,82,107,155,156,158,161,162],$VC1=[1,282],$VD1=[1,283],$VE1=[40,107,294],$VF1=[12,15,27,28,31,79,163,210,213,214,263,264,265,266,267,268,269,270,271,272,273,274,275,276,277],$VG1=[12,15,27,28,31,38,40,79,82,107,155,156,158,161,162,163,192,210,211,213,214,242,263,264,265,266,267,268,269,270,271,272,273,274,275,276,277,294],$VH1=[12,15,27,28,79,239,240,241,243,245,246,248,249,252,254,263,264,265,266,267,268,269,270,271,272,273,274,275,276,277,309,310,311,312,313,314],$VI1=[2,398],$VJ1=[1,301],$VK1=[1,302],$VL1=[1,303],$VM1=[12,15,31,40,79,89,263,264,265,266,267,268,269,270,271,272,273,274,275,276,277],$VN1=[28,40],$VO1=[2,304],$VP1=[6,40,82],$VQ1=[6,12,15,28,40,70,78,80,82,239,240,241,243,245,246,248,249,252,254,277,309,310,311,312,313,314],$VR1=[6,12,15,27,28,38,40,70,73,75,78,79,80,82,107,155,156,158,161,162,163,210,213,214,239,240,241,243,245,246,248,249,252,254,263,264,265,266,267,268,269,270,271,272,273,274,275,276,277,294,309,310,311,312,313,314],$VS1=[6,12,15,27,28,30,31,38,40,67,70,73,75,78,79,80,82,107,155,156,158,161,162,163,192,210,213,214,222,237,239,240,241,242,243,245,246,248,249,252,254,259,263,264,265,266,267,268,269,270,271,272,273,274,275,276,277,283,294,298,301,302,303,304,305,306,307,308,309,310,311,312,313,314],$VT1=[1,326],$VU1=[1,325],$VV1=[1,332],$VW1=[1,331],$VX1=[28,163],$VY1=[6,12,15,27,28,40,67,70,78,80,82,239,240,241,243,245,246,248,249,252,254,277,309,310,311,312,313,314],$VZ1=[6,12,15,27,28,30,31,38,40,60,67,70,73,75,78,79,80,82,107,155,156,158,161,162,163,192,210,213,214,222,237,239,240,241,242,243,245,246,248,249,252,254,259,263,264,265,266,267,268,269,270,271,272,273,274,275,276,277,283,294,295,298,301,302,303,304,305,306,307,308,309,310,311,312,313,314],$V_1=[12,15,28,181,203,208,277],$V$1=[2,355],$V02=[1,354],$V12=[38,40,82,107,155,156,158,161,162,294],$V22=[2,343],$V32=[12,15,27,28,31,38,40,79,82,107,155,156,158,161,162,163,181,192,210,211,213,214,242,263,264,265,266,267,268,269,270,271,272,273,274,275,276,277,294],$V42=[30,31,192,242,302,303],$V52=[30,31,192,222,237,242,259,271,272,273,274,275,276,301,302,303,304,305,306,307,308,309],$V62=[30,31,192,222,237,242,259,271,272,273,274,275,276,283,298,301,302,303,304,305,306,307,308,309],$V72=[1,387],$V82=[1,402],$V92=[1,399],$Va2=[1,400],$Vb2=[12,15,27,28,79,203,237,239,240,241,243,245,246,248,249,252,254,263,264,265,266,267,268,269,270,271,272,273,274,275,276,277,283,301,309,310,311,312,313,314],$Vc2=[12,15,27,28,38,40,79,82,107,155,156,158,161,162,163,210,213,214,263,264,265,266,267,268,269,270,271,272,273,274,275,276,277],$Vd2=[12,15,27,277],$Ve2=[12,15,27,28,38,40,79,82,107,155,156,158,161,162,163,210,213,214,263,264,265,266,267,268,269,270,271,272,273,274,275,276,277,294],$Vf2=[2,316],$Vg2=[12,15,27,181,192,277],$Vh2=[1,453],$Vi2=[1,454],$Vj2=[12,15,31,79,89,263,264,265,266,267,268,269,270,271,272,273,274,275,276,277],$Vk2=[6,12,15,27,28,40,73,75,78,80,82,239,240,241,243,245,246,248,249,252,254,277,309,310,311,312,313,314],$Vl2=[2,311],$Vm2=[12,15,28,181,203,277],$Vn2=[38,40,82,107,155,156,158,161,162,192,211,294],$Vo2=[12,15,27,28,40,79,107,163,210,213,214,263,264,265,266,267,268,269,270,271,272,273,274,275,276,277],$Vp2=[12,15,27,28,31,79,163,210,213,214,263,264,265,266,267,268,269,270,271,272,273,274,275,276,277,297,298],$Vq2=[12,15,27,28,31,79,163,210,213,214,263,264,265,266,267,268,269,270,271,272,273,274,275,276,277,283,297,298,300,301],$Vr2=[1,545],$Vs2=[1,546],$Vt2=[2,299],$Vu2=[12,15,31,181,208,277];
 var parser = {trace: function trace() { },
 yy: {},
-symbols_: {"error":2,"QueryOrUpdateUnit":3,"QueryOrUpdateUnit_repetition0":4,"QueryOrUpdateUnit_group0":5,"EOF":6,"Query":7,"Query_group0":8,"Query_option0":9,"BaseDecl":10,"BASE":11,"IRIREF":12,"PrefixDecl":13,"PREFIX":14,"PNAME_NS":15,"SelectQuery":16,"SelectClause":17,"SelectQuery_repetition0":18,"WhereClause":19,"SolutionModifier":20,"SubSelect":21,"SubSelect_option0":22,"SELECT":23,"SelectClause_option0":24,"SelectClause_group0":25,"SelectClauseItem":26,"VAR":27,"(":28,"Expression":29,"AS":30,")":31,"ConstructQuery":32,"CONSTRUCT":33,"ConstructTemplate":34,"ConstructQuery_repetition0":35,"ConstructQuery_repetition1":36,"WHERE":37,"{":38,"ConstructQuery_option0":39,"}":40,"DescribeQuery":41,"DESCRIBE":42,"DescribeQuery_group0":43,"DescribeQuery_repetition0":44,"DescribeQuery_option0":45,"AskQuery":46,"ASK":47,"AskQuery_repetition0":48,"DatasetClause":49,"FROM":50,"DatasetClause_option0":51,"iri":52,"WhereClause_option0":53,"GroupGraphPattern":54,"SolutionModifier_option0":55,"SolutionModifier_option1":56,"SolutionModifier_option2":57,"SolutionModifier_option3":58,"GroupClause":59,"GROUP":60,"BY":61,"GroupClause_repetition_plus0":62,"GroupCondition":63,"BuiltInCall":64,"FunctionCall":65,"HavingClause":66,"HAVING":67,"HavingClause_repetition_plus0":68,"OrderClause":69,"ORDER":70,"OrderClause_repetition_plus0":71,"OrderCondition":72,"ASC":73,"BrackettedExpression":74,"DESC":75,"Constraint":76,"LimitOffsetClauses":77,"LIMIT":78,"INTEGER":79,"OFFSET":80,"ValuesClause":81,"VALUES":82,"InlineData":83,"InlineData_repetition0":84,"InlineData_repetition1":85,"InlineData_repetition2":86,"DataBlockValue":87,"Literal":88,"UNDEF":89,"DataBlockValueList":90,"DataBlockValueList_repetition0":91,"Update":92,"Update_repetition0":93,"Update1":94,"LOAD":95,"Update1_option0":96,"Update1_option1":97,"Update1_group0":98,"Update1_option2":99,"GraphRefAll":100,"Update1_group1":101,"Update1_option3":102,"GraphOrDefault":103,"TO":104,"CREATE":105,"Update1_option4":106,"GRAPH":107,"INSERTDATA":108,"QuadPattern":109,"DELETEDATA":110,"DELETEWHERE":111,"Update1_option5":112,"InsertClause":113,"Update1_option6":114,"Update1_repetition0":115,"Update1_option7":116,"DeleteClause":117,"Update1_option8":118,"Update1_repetition1":119,"DELETE":120,"INSERT":121,"UsingClause":122,"USING":123,"UsingClause_option0":124,"WithClause":125,"WITH":126,"IntoGraphClause":127,"INTO":128,"DEFAULT":129,"GraphOrDefault_option0":130,"GraphRefAll_group0":131,"QuadPattern_option0":132,"QuadPattern_repetition0":133,"QuadsNotTriples":134,"QuadsNotTriples_group0":135,"QuadsNotTriples_option0":136,"QuadsNotTriples_option1":137,"QuadsNotTriples_option2":138,"TriplesTemplate":139,"TriplesTemplate_repetition0":140,"TriplesSameSubject":141,"TriplesTemplate_option0":142,"GroupGraphPatternSub":143,"GroupGraphPatternSub_option0":144,"GroupGraphPatternSub_repetition0":145,"GroupGraphPatternSubTail":146,"GraphPatternNotTriples":147,"GroupGraphPatternSubTail_option0":148,"GroupGraphPatternSubTail_option1":149,"TriplesBlock":150,"TriplesBlock_repetition0":151,"TriplesSameSubjectPath":152,"TriplesBlock_option0":153,"GraphPatternNotTriples_repetition0":154,"OPTIONAL":155,"MINUS":156,"GraphPatternNotTriples_group0":157,"SERVICE":158,"GraphPatternNotTriples_option0":159,"GraphPatternNotTriples_group1":160,"FILTER":161,"BIND":162,"NIL":163,"FunctionCall_option0":164,"FunctionCall_repetition0":165,"ExpressionList":166,"ExpressionList_repetition0":167,"ConstructTemplate_option0":168,"ConstructTriples":169,"ConstructTriples_repetition0":170,"ConstructTriples_option0":171,"VarOrTerm":172,"PropertyListNotEmpty":173,"TriplesNode":174,"PropertyList":175,"PropertyList_option0":176,"PropertyListNotEmpty_repetition0":177,"VerbObjectList":178,"Verb":179,"ObjectList":180,"a":181,"ObjectList_repetition0":182,"GraphNode":183,"PropertyListPathNotEmpty":184,"TriplesNodePath":185,"TriplesSameSubjectPath_option0":186,"PropertyListPathNotEmpty_group0":187,"PropertyListPathNotEmpty_repetition0":188,"GraphNodePath":189,"PropertyListPathNotEmpty_repetition1":190,"PropertyListPathNotEmptyTail":191,";":192,"PropertyListPathNotEmptyTail_group0":193,"Path":194,"Path_repetition0":195,"PathSequence":196,"PathSequence_repetition0":197,"PathEltOrInverse":198,"PathElt":199,"PathPrimary":200,"PathElt_option0":201,"PathEltOrInverse_option0":202,"!":203,"PathNegatedPropertySet":204,"PathOneInPropertySet":205,"PathNegatedPropertySet_repetition0":206,"PathNegatedPropertySet_option0":207,"^":208,"TriplesNode_repetition_plus0":209,"[":210,"]":211,"TriplesNodePath_repetition_plus0":212,"BLANK_NODE_LABEL":213,"ANON":214,"Expression_repetition0":215,"ConditionalAndExpression":216,"ConditionalAndExpression_repetition0":217,"RelationalExpression":218,"AdditiveExpression":219,"RelationalExpression_group0":220,"RelationalExpression_option0":221,"IN":222,"MultiplicativeExpression":223,"AdditiveExpression_repetition0":224,"AdditiveExpressionTail":225,"AdditiveExpressionTail_group0":226,"NumericLiteralPositive":227,"AdditiveExpressionTail_repetition0":228,"NumericLiteralNegative":229,"AdditiveExpressionTail_repetition1":230,"UnaryExpression":231,"MultiplicativeExpression_repetition0":232,"MultiplicativeExpressionTail":233,"MultiplicativeExpressionTail_group0":234,"UnaryExpression_option0":235,"PrimaryExpression":236,"-":237,"Aggregate":238,"FUNC_ARITY0":239,"FUNC_ARITY1":240,"FUNC_ARITY2":241,",":242,"IF":243,"BuiltInCall_group0":244,"BOUND":245,"BNODE":246,"BuiltInCall_option0":247,"EXISTS":248,"COUNT":249,"Aggregate_option0":250,"Aggregate_group0":251,"FUNC_AGGREGATE":252,"Aggregate_option1":253,"GROUP_CONCAT":254,"Aggregate_option2":255,"Aggregate_option3":256,"String":257,"LANGTAG":258,"^^":259,"DECIMAL":260,"DOUBLE":261,"true":262,"false":263,"STRING_LITERAL1":264,"STRING_LITERAL2":265,"STRING_LITERAL_LONG1":266,"STRING_LITERAL_LONG2":267,"INTEGER_POSITIVE":268,"DECIMAL_POSITIVE":269,"DOUBLE_POSITIVE":270,"INTEGER_NEGATIVE":271,"DECIMAL_NEGATIVE":272,"DOUBLE_NEGATIVE":273,"PNAME_LN":274,"QueryOrUpdateUnit_repetition0_group0":275,"SelectClause_option0_group0":276,"DISTINCT":277,"REDUCED":278,"SelectClause_group0_repetition_plus0":279,"*":280,"DescribeQuery_group0_repetition_plus0_group0":281,"DescribeQuery_group0_repetition_plus0":282,"NAMED":283,"SILENT":284,"CLEAR":285,"DROP":286,"ADD":287,"MOVE":288,"COPY":289,"ALL":290,".":291,"UNION":292,"PropertyListNotEmpty_repetition0_repetition_plus0":293,"|":294,"/":295,"PathElt_option0_group0":296,"?":297,"+":298,"||":299,"&&":300,"=":301,"!=":302,"<":303,">":304,"<=":305,">=":306,"NOT":307,"CONCAT":308,"COALESCE":309,"SUBSTR":310,"REGEX":311,"REPLACE":312,"SEPARATOR":313,"$accept":0,"$end":1},
-terminals_: {2:"error",6:"EOF",11:"BASE",12:"IRIREF",14:"PREFIX",15:"PNAME_NS",23:"SELECT",27:"VAR",28:"(",30:"AS",31:")",33:"CONSTRUCT",37:"WHERE",38:"{",40:"}",42:"DESCRIBE",47:"ASK",50:"FROM",60:"GROUP",61:"BY",67:"HAVING",70:"ORDER",73:"ASC",75:"DESC",78:"LIMIT",79:"INTEGER",80:"OFFSET",82:"VALUES",89:"UNDEF",95:"LOAD",104:"TO",105:"CREATE",107:"GRAPH",108:"INSERTDATA",110:"DELETEDATA",111:"DELETEWHERE",120:"DELETE",121:"INSERT",123:"USING",126:"WITH",128:"INTO",129:"DEFAULT",155:"OPTIONAL",156:"MINUS",158:"SERVICE",161:"FILTER",162:"BIND",163:"NIL",181:"a",192:";",203:"!",208:"^",210:"[",211:"]",213:"BLANK_NODE_LABEL",214:"ANON",222:"IN",237:"-",239:"FUNC_ARITY0",240:"FUNC_ARITY1",241:"FUNC_ARITY2",242:",",243:"IF",245:"BOUND",246:"BNODE",248:"EXISTS",249:"COUNT",252:"FUNC_AGGREGATE",254:"GROUP_CONCAT",258:"LANGTAG",259:"^^",260:"DECIMAL",261:"DOUBLE",262:"true",263:"false",264:"STRING_LITERAL1",265:"STRING_LITERAL2",266:"STRING_LITERAL_LONG1",267:"STRING_LITERAL_LONG2",268:"INTEGER_POSITIVE",269:"DECIMAL_POSITIVE",270:"DOUBLE_POSITIVE",271:"INTEGER_NEGATIVE",272:"DECIMAL_NEGATIVE",273:"DOUBLE_NEGATIVE",274:"PNAME_LN",277:"DISTINCT",278:"REDUCED",280:"*",283:"NAMED",284:"SILENT",285:"CLEAR",286:"DROP",287:"ADD",288:"MOVE",289:"COPY",290:"ALL",291:".",292:"UNION",294:"|",295:"/",297:"?",298:"+",299:"||",300:"&&",301:"=",302:"!=",303:"<",304:">",305:"<=",306:">=",307:"NOT",308:"CONCAT",309:"COALESCE",310:"SUBSTR",311:"REGEX",312:"REPLACE",313:"SEPARATOR"},
-productions_: [0,[3,3],[7,2],[10,2],[13,3],[16,4],[21,4],[17,3],[26,1],[26,5],[32,5],[32,7],[41,5],[46,4],[49,3],[19,2],[20,4],[59,3],[63,1],[63,1],[63,3],[63,5],[63,1],[66,2],[69,3],[72,2],[72,2],[72,1],[72,1],[77,2],[77,2],[77,4],[77,4],[81,2],[83,4],[83,6],[87,1],[87,1],[87,1],[90,3],[92,2],[94,4],[94,3],[94,5],[94,4],[94,2],[94,2],[94,2],[94,6],[94,6],[117,2],[113,2],[122,3],[125,2],[127,3],[103,1],[103,2],[100,2],[100,1],[109,4],[134,7],[139,3],[54,3],[54,3],[143,2],[146,3],[150,3],[147,2],[147,2],[147,2],[147,3],[147,4],[147,2],[147,6],[147,1],[76,1],[76,1],[76,1],[65,2],[65,6],[166,1],[166,4],[34,3],[169,3],[141,2],[141,2],[175,1],[173,2],[178,2],[179,1],[179,1],[179,1],[180,2],[152,2],[152,2],[184,4],[191,1],[191,3],[194,2],[196,2],[199,2],[198,2],[200,1],[200,1],[200,2],[200,3],[204,1],[204,1],[204,4],[205,1],[205,1],[205,2],[205,2],[174,3],[174,3],[185,3],[185,3],[183,1],[183,1],[189,1],[189,1],[172,1],[172,1],[172,1],[172,1],[172,1],[172,1],[29,2],[216,2],[218,1],[218,3],[218,4],[219,2],[225,2],[225,2],[225,2],[223,2],[233,2],[231,2],[231,2],[231,2],[236,1],[236,1],[236,1],[236,1],[236,1],[236,1],[74,3],[64,1],[64,2],[64,4],[64,6],[64,8],[64,2],[64,4],[64,2],[64,4],[64,3],[238,5],[238,5],[238,6],[88,1],[88,2],[88,3],[88,1],[88,1],[88,1],[88,1],[88,1],[88,1],[88,1],[257,1],[257,1],[257,1],[257,1],[227,1],[227,1],[227,1],[229,1],[229,1],[229,1],[52,1],[52,1],[52,1],[275,1],[275,1],[4,0],[4,2],[5,1],[5,1],[8,1],[8,1],[8,1],[8,1],[9,0],[9,1],[18,0],[18,2],[22,0],[22,1],[276,1],[276,1],[24,0],[24,1],[279,1],[279,2],[25,1],[25,1],[35,0],[35,2],[36,0],[36,2],[39,0],[39,1],[281,1],[281,1],[282,1],[282,2],[43,1],[43,1],[44,0],[44,2],[45,0],[45,1],[48,0],[48,2],[51,0],[51,1],[53,0],[53,1],[55,0],[55,1],[56,0],[56,1],[57,0],[57,1],[58,0],[58,1],[62,1],[62,2],[68,1],[68,2],[71,1],[71,2],[84,0],[84,2],[85,0],[85,2],[86,0],[86,2],[91,0],[91,2],[93,0],[93,3],[96,0],[96,1],[97,0],[97,1],[98,1],[98,1],[99,0],[99,1],[101,1],[101,1],[101,1],[102,0],[102,1],[106,0],[106,1],[112,0],[112,1],[114,0],[114,1],[115,0],[115,2],[116,0],[116,1],[118,0],[118,1],[119,0],[119,2],[124,0],[124,1],[130,0],[130,1],[131,1],[131,1],[131,1],[132,0],[132,1],[133,0],[133,2],[135,1],[135,1],[136,0],[136,1],[137,0],[137,1],[138,0],[138,1],[140,0],[140,3],[142,0],[142,1],[144,0],[144,1],[145,0],[145,2],[148,0],[148,1],[149,0],[149,1],[151,0],[151,3],[153,0],[153,1],[154,0],[154,3],[157,1],[157,1],[159,0],[159,1],[160,1],[160,1],[164,0],[164,1],[165,0],[165,3],[167,0],[167,3],[168,0],[168,1],[170,0],[170,3],[171,0],[171,1],[176,0],[176,1],[293,1],[293,2],[177,0],[177,3],[182,0],[182,3],[186,0],[186,1],[187,1],[187,1],[188,0],[188,3],[190,0],[190,2],[193,1],[193,1],[195,0],[195,3],[197,0],[197,3],[296,1],[296,1],[296,1],[201,0],[201,1],[202,0],[202,1],[206,0],[206,3],[207,0],[207,1],[209,1],[209,2],[212,1],[212,2],[215,0],[215,3],[217,0],[217,3],[220,1],[220,1],[220,1],[220,1],[220,1],[220,1],[221,0],[221,1],[224,0],[224,2],[226,1],[226,1],[228,0],[228,2],[230,0],[230,2],[232,0],[232,2],[234,1],[234,1],[235,0],[235,1],[244,1],[244,1],[244,1],[244,1],[244,1],[247,0],[247,1],[250,0],[250,1],[251,1],[251,1],[253,0],[253,1],[255,0],[255,1],[256,0],[256,4]],
+symbols_: {"error":2,"QueryOrUpdateUnit":3,"QueryOrUpdateUnit_repetition0":4,"QueryOrUpdateUnit_group0":5,"EOF":6,"Query":7,"Query_group0":8,"Query_option0":9,"BaseDecl":10,"BASE":11,"IRIREF":12,"PrefixDecl":13,"PREFIX":14,"PNAME_NS":15,"SelectQuery":16,"SelectClause":17,"SelectQuery_repetition0":18,"WhereClause":19,"SolutionModifier":20,"SubSelect":21,"SubSelect_option0":22,"SELECT":23,"SelectClause_option0":24,"SelectClause_group0":25,"SelectClauseItem":26,"VAR":27,"(":28,"Expression":29,"AS":30,")":31,"ConstructQuery":32,"CONSTRUCT":33,"ConstructTemplate":34,"ConstructQuery_repetition0":35,"ConstructQuery_repetition1":36,"WHERE":37,"{":38,"ConstructQuery_option0":39,"}":40,"DescribeQuery":41,"DESCRIBE":42,"DescribeQuery_group0":43,"DescribeQuery_repetition0":44,"DescribeQuery_option0":45,"AskQuery":46,"ASK":47,"AskQuery_repetition0":48,"DatasetClause":49,"FROM":50,"DatasetClause_option0":51,"iri":52,"WhereClause_option0":53,"GroupGraphPattern":54,"SolutionModifier_option0":55,"SolutionModifier_option1":56,"SolutionModifier_option2":57,"SolutionModifier_option3":58,"GroupClause":59,"GROUP":60,"BY":61,"GroupClause_repetition_plus0":62,"GroupCondition":63,"BuiltInCall":64,"FunctionCall":65,"HavingClause":66,"HAVING":67,"HavingClause_repetition_plus0":68,"OrderClause":69,"ORDER":70,"OrderClause_repetition_plus0":71,"OrderCondition":72,"ASC":73,"BrackettedExpression":74,"DESC":75,"Constraint":76,"LimitOffsetClauses":77,"LIMIT":78,"INTEGER":79,"OFFSET":80,"ValuesClause":81,"VALUES":82,"InlineData":83,"InlineData_repetition0":84,"InlineData_repetition1":85,"InlineData_repetition2":86,"DataBlockValue":87,"Literal":88,"UNDEF":89,"DataBlockValueList":90,"DataBlockValueList_repetition0":91,"Update":92,"Update_repetition0":93,"Update1":94,"LOAD":95,"Update1_option0":96,"Update1_option1":97,"Update1_group0":98,"Update1_option2":99,"GraphRefAll":100,"Update1_group1":101,"Update1_option3":102,"GraphOrDefault":103,"TO":104,"CREATE":105,"Update1_option4":106,"GRAPH":107,"INSERTDATA":108,"QuadPattern":109,"DELETEDATA":110,"DELETEWHERE":111,"Update1_option5":112,"InsertClause":113,"Update1_option6":114,"Update1_repetition0":115,"Update1_option7":116,"DeleteClause":117,"Update1_option8":118,"Update1_repetition1":119,"DELETE":120,"INSERT":121,"UsingClause":122,"USING":123,"UsingClause_option0":124,"WithClause":125,"WITH":126,"IntoGraphClause":127,"INTO":128,"DEFAULT":129,"GraphOrDefault_option0":130,"GraphRefAll_group0":131,"QuadPattern_option0":132,"QuadPattern_repetition0":133,"QuadsNotTriples":134,"QuadsNotTriples_group0":135,"QuadsNotTriples_option0":136,"QuadsNotTriples_option1":137,"QuadsNotTriples_option2":138,"TriplesTemplate":139,"TriplesTemplate_repetition0":140,"TriplesSameSubject":141,"TriplesTemplate_option0":142,"GroupGraphPatternSub":143,"GroupGraphPatternSub_option0":144,"GroupGraphPatternSub_repetition0":145,"GroupGraphPatternSubTail":146,"GraphPatternNotTriples":147,"GroupGraphPatternSubTail_option0":148,"GroupGraphPatternSubTail_option1":149,"TriplesBlock":150,"TriplesBlock_repetition0":151,"TriplesSameSubjectPath":152,"TriplesBlock_option0":153,"GraphPatternNotTriples_repetition0":154,"OPTIONAL":155,"MINUS":156,"GraphPatternNotTriples_group0":157,"SERVICE":158,"GraphPatternNotTriples_option0":159,"GraphPatternNotTriples_group1":160,"FILTER":161,"BIND":162,"NIL":163,"FunctionCall_option0":164,"FunctionCall_repetition0":165,"ExpressionList":166,"ExpressionList_repetition0":167,"ConstructTemplate_option0":168,"ConstructTriples":169,"ConstructTriples_repetition0":170,"ConstructTriples_option0":171,"VarOrTerm":172,"PropertyListNotEmpty":173,"TriplesNode":174,"PropertyList":175,"PropertyList_option0":176,"PropertyListNotEmpty_repetition0":177,"VerbObjectList":178,"Verb":179,"ObjectList":180,"a":181,"ObjectList_repetition0":182,"GraphNode":183,"PropertyListPathNotEmpty":184,"TriplesNodePath":185,"TriplesSameSubjectPath_option0":186,"PropertyListPathNotEmpty_group0":187,"PropertyListPathNotEmpty_repetition0":188,"GraphNodePath":189,"PropertyListPathNotEmpty_repetition1":190,"PropertyListPathNotEmptyTail":191,";":192,"PropertyListPathNotEmptyTail_group0":193,"Path":194,"Path_repetition0":195,"PathSequence":196,"PathSequence_repetition0":197,"PathEltOrInverse":198,"PathElt":199,"PathPrimary":200,"PathElt_option0":201,"PathEltOrInverse_option0":202,"!":203,"PathNegatedPropertySet":204,"PathOneInPropertySet":205,"PathNegatedPropertySet_repetition0":206,"PathNegatedPropertySet_option0":207,"^":208,"TriplesNode_repetition_plus0":209,"[":210,"]":211,"TriplesNodePath_repetition_plus0":212,"BLANK_NODE_LABEL":213,"ANON":214,"Expression_repetition0":215,"ConditionalAndExpression":216,"ConditionalAndExpression_repetition0":217,"RelationalExpression":218,"AdditiveExpression":219,"RelationalExpression_group0":220,"RelationalExpression_option0":221,"IN":222,"MultiplicativeExpression":223,"AdditiveExpression_repetition0":224,"AdditiveExpressionTail":225,"AdditiveExpressionTail_group0":226,"NumericLiteralPositive":227,"AdditiveExpressionTail_repetition0":228,"NumericLiteralNegative":229,"AdditiveExpressionTail_repetition1":230,"UnaryExpression":231,"MultiplicativeExpression_repetition0":232,"MultiplicativeExpressionTail":233,"MultiplicativeExpressionTail_group0":234,"UnaryExpression_option0":235,"PrimaryExpression":236,"-":237,"Aggregate":238,"FUNC_ARITY0":239,"FUNC_ARITY1":240,"FUNC_ARITY2":241,",":242,"IF":243,"BuiltInCall_group0":244,"BOUND":245,"BNODE":246,"BuiltInCall_option0":247,"EXISTS":248,"COUNT":249,"Aggregate_option0":250,"Aggregate_group0":251,"FUNC_AGGREGATE":252,"Aggregate_option1":253,"GROUP_CONCAT":254,"Aggregate_option2":255,"Aggregate_option3":256,"GroupConcatSeparator":257,"SEPARATOR":258,"=":259,"String":260,"LANGTAG":261,"^^":262,"DECIMAL":263,"DOUBLE":264,"true":265,"false":266,"STRING_LITERAL1":267,"STRING_LITERAL2":268,"STRING_LITERAL_LONG1":269,"STRING_LITERAL_LONG2":270,"INTEGER_POSITIVE":271,"DECIMAL_POSITIVE":272,"DOUBLE_POSITIVE":273,"INTEGER_NEGATIVE":274,"DECIMAL_NEGATIVE":275,"DOUBLE_NEGATIVE":276,"PNAME_LN":277,"QueryOrUpdateUnit_repetition0_group0":278,"SelectClause_option0_group0":279,"DISTINCT":280,"REDUCED":281,"SelectClause_group0_repetition_plus0":282,"*":283,"DescribeQuery_group0_repetition_plus0_group0":284,"DescribeQuery_group0_repetition_plus0":285,"NAMED":286,"SILENT":287,"CLEAR":288,"DROP":289,"ADD":290,"MOVE":291,"COPY":292,"ALL":293,".":294,"UNION":295,"PropertyListNotEmpty_repetition0_repetition_plus0":296,"|":297,"/":298,"PathElt_option0_group0":299,"?":300,"+":301,"||":302,"&&":303,"!=":304,"<":305,">":306,"<=":307,">=":308,"NOT":309,"CONCAT":310,"COALESCE":311,"SUBSTR":312,"REGEX":313,"REPLACE":314,"$accept":0,"$end":1},
+terminals_: {2:"error",6:"EOF",11:"BASE",12:"IRIREF",14:"PREFIX",15:"PNAME_NS",23:"SELECT",27:"VAR",28:"(",30:"AS",31:")",33:"CONSTRUCT",37:"WHERE",38:"{",40:"}",42:"DESCRIBE",47:"ASK",50:"FROM",60:"GROUP",61:"BY",67:"HAVING",70:"ORDER",73:"ASC",75:"DESC",78:"LIMIT",79:"INTEGER",80:"OFFSET",82:"VALUES",89:"UNDEF",95:"LOAD",104:"TO",105:"CREATE",107:"GRAPH",108:"INSERTDATA",110:"DELETEDATA",111:"DELETEWHERE",120:"DELETE",121:"INSERT",123:"USING",126:"WITH",128:"INTO",129:"DEFAULT",155:"OPTIONAL",156:"MINUS",158:"SERVICE",161:"FILTER",162:"BIND",163:"NIL",181:"a",192:";",203:"!",208:"^",210:"[",211:"]",213:"BLANK_NODE_LABEL",214:"ANON",222:"IN",237:"-",239:"FUNC_ARITY0",240:"FUNC_ARITY1",241:"FUNC_ARITY2",242:",",243:"IF",245:"BOUND",246:"BNODE",248:"EXISTS",249:"COUNT",252:"FUNC_AGGREGATE",254:"GROUP_CONCAT",258:"SEPARATOR",259:"=",261:"LANGTAG",262:"^^",263:"DECIMAL",264:"DOUBLE",265:"true",266:"false",267:"STRING_LITERAL1",268:"STRING_LITERAL2",269:"STRING_LITERAL_LONG1",270:"STRING_LITERAL_LONG2",271:"INTEGER_POSITIVE",272:"DECIMAL_POSITIVE",273:"DOUBLE_POSITIVE",274:"INTEGER_NEGATIVE",275:"DECIMAL_NEGATIVE",276:"DOUBLE_NEGATIVE",277:"PNAME_LN",280:"DISTINCT",281:"REDUCED",283:"*",286:"NAMED",287:"SILENT",288:"CLEAR",289:"DROP",290:"ADD",291:"MOVE",292:"COPY",293:"ALL",294:".",295:"UNION",297:"|",298:"/",300:"?",301:"+",302:"||",303:"&&",304:"!=",305:"<",306:">",307:"<=",308:">=",309:"NOT",310:"CONCAT",311:"COALESCE",312:"SUBSTR",313:"REGEX",314:"REPLACE"},
+productions_: [0,[3,3],[7,2],[10,2],[13,3],[16,4],[21,4],[17,3],[26,1],[26,5],[32,5],[32,7],[41,5],[46,4],[49,3],[19,2],[20,4],[59,3],[63,1],[63,1],[63,3],[63,5],[63,1],[66,2],[69,3],[72,2],[72,2],[72,1],[72,1],[77,2],[77,2],[77,4],[77,4],[81,2],[83,4],[83,6],[87,1],[87,1],[87,1],[90,3],[92,2],[94,4],[94,3],[94,5],[94,4],[94,2],[94,2],[94,2],[94,6],[94,6],[117,2],[113,2],[122,3],[125,2],[127,3],[103,1],[103,2],[100,2],[100,1],[109,4],[134,7],[139,3],[54,3],[54,3],[143,2],[146,3],[150,3],[147,2],[147,2],[147,2],[147,3],[147,4],[147,2],[147,6],[147,1],[76,1],[76,1],[76,1],[65,2],[65,6],[166,1],[166,4],[34,3],[169,3],[141,2],[141,2],[175,1],[173,2],[178,2],[179,1],[179,1],[179,1],[180,2],[152,2],[152,2],[184,4],[191,1],[191,3],[194,2],[196,2],[199,2],[198,2],[200,1],[200,1],[200,2],[200,3],[204,1],[204,1],[204,4],[205,1],[205,1],[205,2],[205,2],[174,3],[174,3],[185,3],[185,3],[183,1],[183,1],[189,1],[189,1],[172,1],[172,1],[172,1],[172,1],[172,1],[172,1],[29,2],[216,2],[218,1],[218,3],[218,4],[219,2],[225,2],[225,2],[225,2],[223,2],[233,2],[231,2],[231,2],[231,2],[236,1],[236,1],[236,1],[236,1],[236,1],[236,1],[74,3],[64,1],[64,2],[64,4],[64,6],[64,8],[64,2],[64,4],[64,2],[64,4],[64,3],[238,5],[238,5],[238,6],[257,4],[88,1],[88,2],[88,3],[88,1],[88,1],[88,1],[88,1],[88,1],[88,1],[88,1],[260,1],[260,1],[260,1],[260,1],[227,1],[227,1],[227,1],[229,1],[229,1],[229,1],[52,1],[52,1],[52,1],[278,1],[278,1],[4,0],[4,2],[5,1],[5,1],[8,1],[8,1],[8,1],[8,1],[9,0],[9,1],[18,0],[18,2],[22,0],[22,1],[279,1],[279,1],[24,0],[24,1],[282,1],[282,2],[25,1],[25,1],[35,0],[35,2],[36,0],[36,2],[39,0],[39,1],[284,1],[284,1],[285,1],[285,2],[43,1],[43,1],[44,0],[44,2],[45,0],[45,1],[48,0],[48,2],[51,0],[51,1],[53,0],[53,1],[55,0],[55,1],[56,0],[56,1],[57,0],[57,1],[58,0],[58,1],[62,1],[62,2],[68,1],[68,2],[71,1],[71,2],[84,0],[84,2],[85,0],[85,2],[86,0],[86,2],[91,0],[91,2],[93,0],[93,3],[96,0],[96,1],[97,0],[97,1],[98,1],[98,1],[99,0],[99,1],[101,1],[101,1],[101,1],[102,0],[102,1],[106,0],[106,1],[112,0],[112,1],[114,0],[114,1],[115,0],[115,2],[116,0],[116,1],[118,0],[118,1],[119,0],[119,2],[124,0],[124,1],[130,0],[130,1],[131,1],[131,1],[131,1],[132,0],[132,1],[133,0],[133,2],[135,1],[135,1],[136,0],[136,1],[137,0],[137,1],[138,0],[138,1],[140,0],[140,3],[142,0],[142,1],[144,0],[144,1],[145,0],[145,2],[148,0],[148,1],[149,0],[149,1],[151,0],[151,3],[153,0],[153,1],[154,0],[154,3],[157,1],[157,1],[159,0],[159,1],[160,1],[160,1],[164,0],[164,1],[165,0],[165,3],[167,0],[167,3],[168,0],[168,1],[170,0],[170,3],[171,0],[171,1],[176,0],[176,1],[296,1],[296,2],[177,0],[177,3],[182,0],[182,3],[186,0],[186,1],[187,1],[187,1],[188,0],[188,3],[190,0],[190,2],[193,1],[193,1],[195,0],[195,3],[197,0],[197,3],[299,1],[299,1],[299,1],[201,0],[201,1],[202,0],[202,1],[206,0],[206,3],[207,0],[207,1],[209,1],[209,2],[212,1],[212,2],[215,0],[215,3],[217,0],[217,3],[220,1],[220,1],[220,1],[220,1],[220,1],[220,1],[221,0],[221,1],[224,0],[224,2],[226,1],[226,1],[228,0],[228,2],[230,0],[230,2],[232,0],[232,2],[234,1],[234,1],[235,0],[235,1],[244,1],[244,1],[244,1],[244,1],[244,1],[247,0],[247,1],[250,0],[250,1],[251,1],[251,1],[253,0],[253,1],[255,0],[255,1],[256,0],[256,1]],
 performAction: function anonymous(yytext, yyleng, yylineno, yy, yystate /* action[1] */, $$ /* vstack */, _$ /* lstack */) {
 /* this == yyval */
 
@@ -12856,13 +13809,14 @@ var $0 = $$.length - 1;
 switch (yystate) {
 case 1:
 
+      $$[$0-1].prefixes = Parser.prefixes;
       Parser.prefixes = null;
       base = basePath = baseRoot = '';
       return $$[$0-1];
     
 break;
 case 2:
-this.$ = extend({ type: 'query', prefixes: Parser.prefixes || {} }, $$[$0-1], $$[$0]);
+this.$ = extend({ type: 'query' }, $$[$0-1], $$[$0]);
 break;
 case 3:
 
@@ -13002,10 +13956,10 @@ case 47:
 this.$ = { updateType: 'deletewhere', delete: $$[$0] };
 break;
 case 48:
-this.$ = extend({ updateType: 'insertdelete' }, $$[$0-5], { insert: $$[$0-4] || [] }, { delete: $$[$0-3] || [] }, groupDatasets($$[$0-2]), { where: $$[$0].patterns });
+this.$ = extend({ updateType: 'insertdelete' }, $$[$0-5], { insert: $$[$0-4] || [] }, { delete: $$[$0-3] || [] }, groupDatasets($$[$0-2]), { where: $$[$0].patterns });
 break;
 case 49:
-this.$ = extend({ updateType: 'insertdelete' }, $$[$0-5], { delete: $$[$0-4] || [] }, { insert: $$[$0-3] || [] }, groupDatasets($$[$0-2]), { where: $$[$0].patterns });
+this.$ = extend({ updateType: 'insertdelete' }, $$[$0-5], { delete: $$[$0-4] || [] }, { insert: $$[$0-3] || [] }, groupDatasets($$[$0-2]), { where: $$[$0].patterns });
 break;
 case 50: case 51: case 54: case 138:
 this.$ = $$[$0];
@@ -13027,7 +13981,7 @@ this.$ = $$[$0-2] ? unionAll($$[$0-1], [$$[$0-2]]) : unionAll($$[$0-1]);
 break;
 case 60:
 
-      var graph = extend($$[$0-3] || { triples: [] }, { type: 'graph', name: toVar($$[$0-5]) });
+      var graph = extend($$[$0-3] || { triples: [] }, { type: 'graph', name: toVar($$[$0-5]) });
       this.$ = $$[$0] ? [graph, $$[$0]] : [graph];
     
 break;
@@ -13101,7 +14055,7 @@ break;
 case 79:
 this.$ = { type: 'functionCall', function: $$[$0-5], args: appendTo($$[$0-2], $$[$0-1]), distinct: !!$$[$0-3] };
 break;
-case 80: case 96: case 107: case 186: case 196: case 208: case 210: case 220: case 224: case 244: case 246: case 248: case 250: case 252: case 273: case 279: case 290: case 300: case 306: case 312: case 316: case 326: case 328: case 332: case 340: case 342: case 348: case 350: case 354: case 356: case 365: case 373: case 375: case 385: case 389: case 391: case 393:
+case 80: case 96: case 107: case 187: case 197: case 209: case 211: case 221: case 225: case 245: case 247: case 249: case 251: case 253: case 274: case 280: case 291: case 301: case 307: case 313: case 317: case 327: case 329: case 333: case 341: case 343: case 349: case 351: case 355: case 357: case 366: case 374: case 376: case 386: case 390: case 392: case 394:
 this.$ = [];
 break;
 case 81:
@@ -13186,7 +14140,7 @@ case 130:
 this.$ = operation($$[$0-1], [$$[$0-2], $$[$0]]);
 break;
 case 131:
-this.$ = operation($$[$0-2] ? 'notin' : 'in', $$[$0]);
+this.$ = operation($$[$0-2] ? 'notin' : 'in', [$$[$0-3], $$[$0]]);
 break;
 case 132: case 136:
 this.$ = createOperationTree($$[$0-1], $$[$0]);
@@ -13233,49 +14187,55 @@ break;
 case 157:
 this.$ = operation($$[$0-2] ? 'notexists' :'exists', [degroupSingle($$[$0])]);
 break;
-case 159:
-this.$ = expression($$[$0-1], { type: 'aggregate', aggregation: lowercase($$[$0-4]), distinct: !!$$[$0-2], expression: $$[$0-1] });
+case 158: case 159:
+this.$ = expression($$[$0-1], { type: 'aggregate', aggregation: lowercase($$[$0-4]), distinct: !!$$[$0-2] });
 break;
-case 162:
-this.$ = $$[$0-1] + lowercase($$[$0]);
+case 160:
+this.$ = expression($$[$0-2], { type: 'aggregate', aggregation: lowercase($$[$0-5]), distinct: !!$$[$0-3], separator: $$[$0-1] || ' ' });
+break;
+case 161:
+this.$ = $$[$0].substr(1, $$[$0].length - 2);
 break;
 case 163:
+this.$ = $$[$0-1] + lowercase($$[$0]);
+break;
+case 164:
 this.$ = $$[$0-2] + '^^' + $$[$0];
 break;
-case 164: case 178:
+case 165: case 179:
 this.$ = createLiteral($$[$0], XSD_INTEGER);
 break;
-case 165: case 179:
+case 166: case 180:
 this.$ = createLiteral($$[$0], XSD_DECIMAL);
 break;
-case 166: case 180:
+case 167: case 181:
 this.$ = createLiteral(lowercase($$[$0]), XSD_DOUBLE);
 break;
-case 169:
+case 170:
 this.$ = XSD_TRUE;
 break;
-case 170:
+case 171:
 this.$ = XSD_FALSE;
 break;
-case 171: case 172:
+case 172: case 173:
 this.$ = unescapeString($$[$0], 1);
 break;
-case 173: case 174:
+case 174: case 175:
 this.$ = unescapeString($$[$0], 3);
 break;
-case 175:
+case 176:
 this.$ = createLiteral($$[$0].substr(1), XSD_INTEGER);
 break;
-case 176:
+case 177:
 this.$ = createLiteral($$[$0].substr(1), XSD_DECIMAL);
 break;
-case 177:
+case 178:
 this.$ = createLiteral($$[$0].substr(1).toLowerCase(), XSD_DOUBLE);
 break;
-case 181:
+case 182:
 this.$ = resolveIRI($$[$0]);
 break;
-case 182:
+case 183:
 
       var namePos = $$[$0].indexOf(':'),
           prefix = $$[$0].substr(0, namePos),
@@ -13284,26 +14244,26 @@ case 182:
       this.$ = resolveIRI(expansion + $$[$0].substr(namePos + 1));
     
 break;
-case 183:
+case 184:
 
       $$[$0] = $$[$0].substr(0, $$[$0].length - 1);
       if (!($$[$0] in Parser.prefixes)) throw new Error('Unknown prefix: ' + $$[$0]);
       this.$ = resolveIRI(Parser.prefixes[$$[$0]]);
     
 break;
-case 187: case 197: case 205: case 209: case 211: case 217: case 221: case 225: case 239: case 241: case 243: case 245: case 247: case 249: case 251: case 274: case 280: case 291: case 307: case 339: case 351: case 370: case 372: case 386: case 390: case 392: case 394:
+case 188: case 198: case 206: case 210: case 212: case 218: case 222: case 226: case 240: case 242: case 244: case 246: case 248: case 250: case 252: case 275: case 281: case 292: case 308: case 340: case 352: case 371: case 373: case 387: case 391: case 393: case 395:
 $$[$0-1].push($$[$0]);
 break;
-case 204: case 216: case 238: case 240: case 242: case 338: case 369: case 371:
+case 205: case 217: case 239: case 241: case 243: case 339: case 370: case 372:
 this.$ = [$$[$0]];
 break;
-case 253: case 301: case 313: case 317: case 327: case 329: case 333: case 341: case 343: case 349: case 355: case 357: case 366: case 374: case 376:
+case 254: case 302: case 314: case 318: case 328: case 330: case 334: case 342: case 344: case 350: case 356: case 358: case 367: case 375: case 377:
 $$[$0-2].push($$[$0-1]);
 break;
 }
 },
-table: [o(V0,[2,186],{3:1,4:2}),{1:[3]},o(V1,[2,252],{5:3,275:4,7:5,92:6,10:7,13:8,8:9,93:10,16:13,32:14,41:15,46:16,17:17,11:[1,11],14:[1,12],23:V2,33:[1,18],42:[1,19],47:[1,20]}),{6:[1,22]},o(V0,[2,187]),{6:[2,188]},{6:[2,189]},o(V0,[2,184]),o(V0,[2,185]),{6:[2,194],9:23,81:24,82:V3},{94:26,95:[1,27],98:28,101:29,105:[1,30],108:[1,31],110:[1,32],111:[1,33],112:34,116:35,120:[2,275],121:[2,269],125:41,126:[1,42],285:[1,36],286:[1,37],287:[1,38],288:[1,39],289:[1,40]},{12:[1,43]},{15:[1,44]},o(V4,[2,190]),o(V4,[2,191]),o(V4,[2,192]),o(V4,[2,193]),o(V5,[2,196],{18:45}),o(V6,[2,210],{34:46,36:47,38:[1,48]}),{12:V7,15:V8,27:V9,43:49,52:54,274:Va,280:[1,51],281:52,282:50},o(V5,[2,224],{48:58}),o(Vb,[2,202],{24:59,276:60,277:[1,61],278:[1,62]}),{1:[2,1]},{6:[2,2]},{6:[2,195]},{27:[1,64],28:[1,65],83:63},{6:[2,40],192:[1,66]},o(Vc,[2,254],{96:67,284:[1,68]}),o(Vd,[2,260],{99:69,284:[1,70]}),o(Ve,[2,265],{102:71,284:[1,72]}),{106:73,107:[2,267],284:[1,74]},{38:Vf,109:75},{38:Vf,109:77},{38:Vf,109:78},{113:79,121:Vg},{117:81,120:Vh},o(Vi,[2,258]),o(Vi,[2,259]),o(Vj,[2,262]),o(Vj,[2,263]),o(Vj,[2,264]),{120:[2,276],121:[2,270]},{12:V7,15:V8,52:83,274:Va},o(V0,[2,3]),{12:[1,84]},{19:85,37:Vk,38:Vl,49:86,50:Vm,53:87},o(V5,[2,208],{35:90}),{37:[1,91],49:92,50:Vm},o(Vn,[2,332],{168:93,169:94,170:95,40:[2,330]}),o(Vo,[2,220],{44:96}),o(Vo,[2,218],{52:54,281:97,12:V7,15:V8,27:V9,274:Va}),o(Vo,[2,219]),o(Vp,[2,216]),o(Vp,[2,214]),o(Vp,[2,215]),o(Vq,[2,181]),o(Vq,[2,182]),o(Vq,[2,183]),{19:98,37:Vk,38:Vl,49:99,50:Vm,53:87},{25:100,26:103,27:Vr,28:Vs,279:101,280:[1,102]},o(Vb,[2,203]),o(Vb,[2,200]),o(Vb,[2,201]),o(Vt,[2,33]),{38:[1,106]},o(Vu,[2,246],{85:107}),o(V1,[2,253]),{12:V7,15:V8,52:108,274:Va},o(Vc,[2,255]),{100:109,107:[1,110],129:[1,112],131:111,283:[1,113],290:[1,114]},o(Vd,[2,261]),o(Vc,Vv,{103:115,130:117,107:Vw,129:Vx}),o(Ve,[2,266]),{107:[1,119]},{107:[2,268]},o(Vy,[2,45]),o(Vn,Vz,{132:120,139:121,140:122,40:VA,107:VA}),o(Vy,[2,46]),o(Vy,[2,47]),o(VB,[2,271],{114:123,117:124,120:Vh}),{38:Vf,109:125},o(VB,[2,277],{118:126,113:127,121:Vg}),{38:Vf,109:128},o([120,121],[2,53]),o(V0,[2,4]),o(VC,VD,{20:129,55:130,59:131,60:VE}),o(V5,[2,197]),{38:VF,54:133},o(Vc,[2,226],{51:135,283:[1,136]}),{38:[2,229]},{19:137,37:Vk,38:Vl,49:138,50:Vm,53:87},{38:[1,139]},o(V6,[2,211]),{40:[1,140]},{40:[2,331]},{12:V7,15:V8,27:VG,28:VH,52:145,79:VI,88:146,141:141,163:VJ,172:142,174:143,210:VK,213:VL,214:VM,227:156,229:157,257:152,260:VN,261:VO,262:VP,263:VQ,264:VR,265:VS,266:VT,267:VU,268:VV,269:VW,270:VX,271:VY,272:VZ,273:V_,274:Va},o(V$,[2,222],{53:87,45:170,49:171,19:172,37:Vk,38:Vl,50:Vm}),o(Vp,[2,217]),o(VC,VD,{55:130,59:131,20:173,60:VE}),o(V5,[2,225]),o(V5,[2,7]),o(V5,[2,206],{26:174,27:Vr,28:Vs}),o(V5,[2,207]),o(V01,[2,204]),o(V01,[2,8]),o(V11,V21,{29:175,215:176}),o(V31,[2,244],{84:177}),{27:[1,179],31:[1,178]},o(Vy,[2,256],{97:180,127:181,128:[1,182]}),o(Vy,[2,42]),{12:V7,15:V8,52:183,274:Va},o(Vy,[2,58]),o(Vy,[2,285]),o(Vy,[2,286]),o(Vy,[2,287]),{104:[1,184]},o(V41,[2,55]),{12:V7,15:V8,52:185,274:Va},o(Vc,[2,284]),{12:V7,15:V8,52:186,274:Va},o(V51,[2,290],{133:187}),o(V51,[2,289]),{12:V7,15:V8,27:VG,28:VH,52:145,79:VI,88:146,141:188,163:VJ,172:142,174:143,210:VK,213:VL,214:VM,227:156,229:157,257:152,260:VN,261:VO,262:VP,263:VQ,264:VR,265:VS,266:VT,267:VU,268:VV,269:VW,270:VX,271:VY,272:VZ,273:V_,274:Va},o(VB,[2,273],{115:189}),o(VB,[2,272]),o([37,120,123],[2,51]),o(VB,[2,279],{119:190}),o(VB,[2,278]),o([37,121,123],[2,50]),o(V4,[2,5]),o(V61,[2,232],{56:191,66:192,67:[1,193]}),o(VC,[2,231]),{61:[1,194]},o([6,40,60,67,70,78,80,82],[2,15]),o(Vn,V71,{21:195,143:196,17:197,144:198,150:199,151:200,23:V2,38:V81,40:V81,82:V81,107:V81,155:V81,156:V81,158:V81,161:V81,162:V81}),{12:V7,15:V8,52:201,274:Va},o(Vc,[2,227]),o(VC,VD,{55:130,59:131,20:202,60:VE}),o(V5,[2,209]),o(Vn,Vz,{140:122,39:203,139:204,40:[2,212]}),o(V5,[2,82]),{40:[2,334],171:205,291:[1,206]},o(V91,Va1,{173:207,177:208}),o(V91,Va1,{177:208,175:209,176:210,173:211,40:Vb1,107:Vb1,291:Vb1}),o(Vc1,[2,121]),o(Vc1,[2,122]),o(Vc1,[2,123]),o(Vc1,[2,124]),o(Vc1,[2,125]),o(Vc1,[2,126]),{12:V7,15:V8,27:VG,28:VH,52:145,79:VI,88:146,163:VJ,172:214,174:215,183:213,209:212,210:VK,213:VL,214:VM,227:156,229:157,257:152,260:VN,261:VO,262:VP,263:VQ,264:VR,265:VS,266:VT,267:VU,268:VV,269:VW,270:VX,271:VY,272:VZ,273:V_,274:Va},o(V91,Va1,{177:208,173:216}),o(Vd1,[2,161],{258:[1,217],259:[1,218]}),o(Vd1,[2,164]),o(Vd1,[2,165]),o(Vd1,[2,166]),o(Vd1,[2,167]),o(Vd1,[2,168]),o(Vd1,[2,169]),o(Vd1,[2,170]),o(Ve1,[2,171]),o(Ve1,[2,172]),o(Ve1,[2,173]),o(Ve1,[2,174]),o(Vd1,[2,175]),o(Vd1,[2,176]),o(Vd1,[2,177]),o(Vd1,[2,178]),o(Vd1,[2,179]),o(Vd1,[2,180]),o(VC,VD,{55:130,59:131,20:219,60:VE}),o(Vo,[2,221]),o(V$,[2,223]),o(V4,[2,13]),o(V01,[2,205]),{30:[1,220]},o(V11,[2,375],{216:221,217:222}),{12:V7,15:V8,40:[1,223],52:225,79:VI,87:224,88:226,89:Vf1,227:156,229:157,257:152,260:VN,261:VO,262:VP,263:VQ,264:VR,265:VS,266:VT,267:VU,268:VV,269:VW,270:VX,271:VY,272:VZ,273:V_,274:Va},{38:[1,228]},o(Vu,[2,247]),o(Vy,[2,41]),o(Vy,[2,257]),{107:[1,229]},o(Vy,[2,57]),o(Vc,Vv,{130:117,103:230,107:Vw,129:Vx}),o(V41,[2,56]),o(Vy,[2,44]),{40:[1,231],107:[1,233],134:232},o(V51,[2,302],{142:234,291:[1,235]}),{37:[1,236],122:237,123:Vg1},{37:[1,239],122:240,123:Vg1},o(Vh1,[2,234],{57:241,69:242,70:[1,243]}),o(V61,[2,233]),{12:V7,15:V8,28:Vi1,52:259,64:247,65:248,68:244,74:246,76:245,238:250,239:Vj1,240:Vk1,241:Vl1,243:Vm1,244:255,245:Vn1,246:Vo1,247:258,248:Vp1,249:Vq1,252:Vr1,254:Vs1,274:Va,307:Vt1,308:Vu1,309:Vv1,310:Vw1,311:Vx1,312:Vy1},{12:V7,15:V8,27:Vz1,28:VA1,52:259,62:269,63:270,64:271,65:272,238:250,239:Vj1,240:Vk1,241:Vl1,243:Vm1,244:255,245:Vn1,246:Vo1,247:258,248:Vp1,249:Vq1,252:Vr1,254:Vs1,274:Va,307:Vt1,308:Vu1,309:Vv1,310:Vw1,311:Vx1,312:Vy1},{40:[1,275]},{40:[1,276]},{19:277,37:Vk,38:Vl,53:87},o(VB1,[2,306],{145:278}),o(VB1,[2,305]),{12:V7,15:V8,27:VG,28:VC1,52:145,79:VI,88:146,152:279,163:VJ,172:280,185:281,210:VD1,213:VL,214:VM,227:156,229:157,257:152,260:VN,261:VO,262:VP,263:VQ,264:VR,265:VS,266:VT,267:VU,268:VV,269:VW,270:VX,271:VY,272:VZ,273:V_,274:Va},o(Vo,[2,14]),o(V4,[2,10]),{40:[1,284]},{40:[2,213]},{40:[2,83]},o(Vn,[2,333],{40:[2,335]}),o(VE1,[2,84]),{12:V7,15:V8,27:[1,287],52:288,178:285,179:286,181:[1,289],274:Va},o(VE1,[2,85]),o(VE1,[2,86]),o(VE1,[2,337]),{12:V7,15:V8,27:VG,28:VH,31:[1,290],52:145,79:VI,88:146,163:VJ,172:214,174:215,183:291,210:VK,213:VL,214:VM,227:156,229:157,257:152,260:VN,261:VO,262:VP,263:VQ,264:VR,265:VS,266:VT,267:VU,268:VV,269:VW,270:VX,271:VY,272:VZ,273:V_,274:Va},o(VF1,[2,369]),o(VG1,[2,117]),o(VG1,[2,118]),{211:[1,292]},o(Vd1,[2,162]),{12:V7,15:V8,52:293,274:Va},o(V4,[2,12]),{27:[1,294]},o([30,31,192,242],[2,127],{299:[1,295]}),o(VH1,VI1,{218:296,219:297,223:298,231:299,235:300,203:VJ1,237:VK1,298:VL1}),o(Vt,[2,34]),o(V31,[2,245]),o(VM1,[2,36]),o(VM1,[2,37]),o(VM1,[2,38]),o(VN1,[2,248],{86:304}),{12:V7,15:V8,52:305,274:Va},o(Vy,[2,43]),o([6,37,120,121,123,192],[2,59]),o(V51,[2,291]),{12:V7,15:V8,27:[1,307],52:308,135:306,274:Va},o(V51,[2,61]),o(Vn,[2,301],{40:VO1,107:VO1}),{38:VF,54:309},o(VB,[2,274]),o(Vc,[2,281],{124:310,283:[1,311]}),{38:VF,54:312},o(VB,[2,280]),o(VP1,[2,236],{58:313,77:314,78:[1,315],80:[1,316]}),o(Vh1,[2,235]),{61:[1,317]},o(V61,[2,23],{74:246,64:247,65:248,238:250,244:255,247:258,52:259,76:318,12:V7,15:V8,28:Vi1,239:Vj1,240:Vk1,241:Vl1,243:Vm1,245:Vn1,246:Vo1,248:Vp1,249:Vq1,252:Vr1,254:Vs1,274:Va,307:Vt1,308:Vu1,309:Vv1,310:Vw1,311:Vx1,312:Vy1}),o(VQ1,[2,240]),o(VR1,[2,75]),o(VR1,[2,76]),o(VR1,[2,77]),o(V11,V21,{215:176,29:319}),o(VS1,[2,148]),{163:[1,320]},{28:[1,321]},{28:[1,322]},{28:[1,323]},{28:VT1,163:VU1,166:324},{28:[1,327]},{28:[1,329],163:[1,328]},{248:[1,330]},{28:VV1,163:VW1},{28:[1,333]},{28:[1,334]},{28:[1,335]},o(VX1,[2,399]),o(VX1,[2,400]),o(VX1,[2,401]),o(VX1,[2,402]),o(VX1,[2,403]),{248:[2,405]},o(VC,[2,17],{238:250,244:255,247:258,52:259,64:271,65:272,63:336,12:V7,15:V8,27:Vz1,28:VA1,239:Vj1,240:Vk1,241:Vl1,243:Vm1,245:Vn1,246:Vo1,248:Vp1,249:Vq1,252:Vr1,254:Vs1,274:Va,307:Vt1,308:Vu1,309:Vv1,310:Vw1,311:Vx1,312:Vy1}),o(VY1,[2,238]),o(VY1,[2,18]),o(VY1,[2,19]),o(V11,V21,{215:176,29:337}),o(VY1,[2,22]),o(VZ1,[2,62]),o(VZ1,[2,63]),o(VC,VD,{55:130,59:131,20:338,60:VE}),{38:[2,316],40:[2,64],81:348,82:V3,107:[1,344],146:339,147:340,154:341,155:[1,342],156:[1,343],158:[1,345],161:[1,346],162:[1,347]},o(VB1,[2,314],{153:349,291:[1,350]}),o(V_1,V$1,{184:351,187:352,194:353,195:355,27:V02}),o(V12,[2,344],{187:352,194:353,195:355,186:356,184:357,12:V$1,15:V$1,28:V$1,181:V$1,203:V$1,208:V$1,274:V$1,27:V02}),{12:V7,15:V8,27:VG,28:VC1,52:145,79:VI,88:146,163:VJ,172:360,185:361,189:359,210:VD1,212:358,213:VL,214:VM,227:156,229:157,257:152,260:VN,261:VO,262:VP,263:VQ,264:VR,265:VS,266:VT,267:VU,268:VV,269:VW,270:VX,271:VY,272:VZ,273:V_,274:Va},o(V_1,V$1,{187:352,194:353,195:355,184:362,27:V02}),o(VC,VD,{55:130,59:131,20:363,60:VE}),o([40,107,211,291],[2,87],{293:364,192:[1,365]}),o(Vn,V22,{180:366,182:367}),o(Vn,[2,89]),o(Vn,[2,90]),o(Vn,[2,91]),o(V32,[2,113]),o(VF1,[2,370]),o(V32,[2,114]),o(Vd1,[2,163]),{31:[1,368]},o(V11,[2,374]),o([30,31,192,242,299],[2,128],{300:[1,369]}),o(V42,[2,129],{220:370,221:371,222:[2,383],301:[1,372],302:[1,373],303:[1,374],304:[1,375],305:[1,376],306:[1,377],307:[1,378]}),o(V52,[2,385],{224:379}),o(V62,[2,393],{232:380}),{12:V7,15:V8,27:V72,28:Vi1,52:384,64:383,65:385,74:382,79:VI,88:386,227:156,229:157,236:381,238:250,239:Vj1,240:Vk1,241:Vl1,243:Vm1,244:255,245:Vn1,246:Vo1,247:258,248:Vp1,249:Vq1,252:Vr1,254:Vs1,257:152,260:VN,261:VO,262:VP,263:VQ,264:VR,265:VS,266:VT,267:VU,268:VV,269:VW,270:VX,271:VY,272:VZ,273:V_,274:Va,307:Vt1,308:Vu1,309:Vv1,310:Vw1,311:Vx1,312:Vy1},{12:V7,15:V8,27:V72,28:Vi1,52:384,64:383,65:385,74:382,79:VI,88:386,227:156,229:157,236:388,238:250,239:Vj1,240:Vk1,241:Vl1,243:Vm1,244:255,245:Vn1,246:Vo1,247:258,248:Vp1,249:Vq1,252:Vr1,254:Vs1,257:152,260:VN,261:VO,262:VP,263:VQ,264:VR,265:VS,266:VT,267:VU,268:VV,269:VW,270:VX,271:VY,272:VZ,273:V_,274:Va,307:Vt1,308:Vu1,309:Vv1,310:Vw1,311:Vx1,312:Vy1},{12:V7,15:V8,27:V72,28:Vi1,52:384,64:383,65:385,74:382,79:VI,88:386,227:156,229:157,236:389,238:250,239:Vj1,240:Vk1,241:Vl1,243:Vm1,244:255,245:Vn1,246:Vo1,247:258,248:Vp1,249:Vq1,252:Vr1,254:Vs1,257:152,260:VN,261:VO,262:VP,263:VQ,264:VR,265:VS,266:VT,267:VU,268:VV,269:VW,270:VX,271:VY,272:VZ,273:V_,274:Va,307:Vt1,308:Vu1,309:Vv1,310:Vw1,311:Vx1,312:Vy1},o(VH1,[2,398]),{28:[1,392],40:[1,390],90:391},o(Vy,[2,54]),{38:[1,393]},{38:[2,292]},{38:[2,293]},o(Vy,[2,48]),{12:V7,15:V8,52:394,274:Va},o(Vc,[2,282]),o(Vy,[2,49]),o(VP1,[2,16]),o(VP1,[2,237]),{79:[1,395]},{79:[1,396]},{12:V7,15:V8,27:V82,28:Vi1,52:259,64:247,65:248,71:397,72:398,73:V92,74:246,75:Va2,76:401,238:250,239:Vj1,240:Vk1,241:Vl1,243:Vm1,244:255,245:Vn1,246:Vo1,247:258,248:Vp1,249:Vq1,252:Vr1,254:Vs1,274:Va,307:Vt1,308:Vu1,309:Vv1,310:Vw1,311:Vx1,312:Vy1},o(VQ1,[2,241]),{31:[1,403]},o(VS1,[2,149]),o(V11,V21,{215:176,29:404}),o(V11,V21,{215:176,29:405}),o(V11,V21,{215:176,29:406}),o(VS1,[2,153]),o(VS1,[2,80]),o(V11,[2,328],{167:407}),{27:[1,408]},o(VS1,[2,155]),o(V11,V21,{215:176,29:409}),{38:VF,54:410},o(VS1,[2,78]),o(V11,[2,324],{164:411,277:[1,412]}),o(Vb2,[2,406],{250:413,277:[1,414]}),o(V11,[2,410],{253:415,277:[1,416]}),o(V11,[2,412],{255:417,277:[1,418]}),o(VY1,[2,239]),{30:[1,420],31:[1,419]},{22:421,40:[2,198],81:422,82:V3},o(VB1,[2,307]),o(Vc2,[2,308],{148:423,291:[1,424]}),{38:VF,54:425},{38:VF,54:426},{38:VF,54:427},{12:V7,15:V8,27:[1,429],52:430,157:428,274:Va},o(Vd2,[2,320],{159:431,284:[1,432]}),{12:V7,15:V8,28:Vi1,52:259,64:247,65:248,74:246,76:433,238:250,239:Vj1,240:Vk1,241:Vl1,243:Vm1,244:255,245:Vn1,246:Vo1,247:258,248:Vp1,249:Vq1,252:Vr1,254:Vs1,274:Va,307:Vt1,308:Vu1,309:Vv1,310:Vw1,311:Vx1,312:Vy1},{28:[1,434]},o(Ve2,[2,74]),o(VB1,[2,66]),o(Vn,[2,313],{38:Vf2,40:Vf2,82:Vf2,107:Vf2,155:Vf2,156:Vf2,158:Vf2,161:Vf2,162:Vf2}),o(V12,[2,93]),o(Vn,[2,348],{188:435}),o(Vn,[2,346]),o(Vn,[2,347]),o(V_1,[2,356],{196:436,197:437}),o(V12,[2,94]),o(V12,[2,345]),{12:V7,15:V8,27:VG,28:VC1,31:[1,438],52:145,79:VI,88:146,163:VJ,172:360,185:361,189:439,210:VD1,213:VL,214:VM,227:156,229:157,257:152,260:VN,261:VO,262:VP,263:VQ,264:VR,265:VS,266:VT,267:VU,268:VV,269:VW,270:VX,271:VY,272:VZ,273:V_,274:Va},o(VF1,[2,371]),o(VG1,[2,119]),o(VG1,[2,120]),{211:[1,440]},o(V4,[2,11]),o(V91,[2,341],{192:[1,441]}),o(Vg2,[2,338]),o([40,107,192,211,291],[2,88]),{12:V7,15:V8,27:VG,28:VH,52:145,79:VI,88:146,163:VJ,172:214,174:215,183:442,210:VK,213:VL,214:VM,227:156,229:157,257:152,260:VN,261:VO,262:VP,263:VQ,264:VR,265:VS,266:VT,267:VU,268:VV,269:VW,270:VX,271:VY,272:VZ,273:V_,274:Va},o(V01,[2,9]),o(V11,[2,376]),o(VH1,VI1,{223:298,231:299,235:300,219:443,203:VJ1,237:VK1,298:VL1}),{222:[1,444]},o(V11,[2,377]),o(V11,[2,378]),o(V11,[2,379]),o(V11,[2,380]),o(V11,[2,381]),o(V11,[2,382]),{222:[2,384]},o([30,31,192,222,242,299,300,301,302,303,304,305,306,307],[2,132],{225:445,226:446,227:447,229:448,237:[1,450],268:VV,269:VW,270:VX,271:VY,272:VZ,273:V_,298:[1,449]}),o(V52,[2,136],{233:451,234:452,280:Vh2,295:Vi2}),o(V62,[2,138]),o(V62,[2,141]),o(V62,[2,142]),o(V62,[2,143],{28:VV1,163:VW1}),o(V62,[2,144]),o(V62,[2,145]),o(V62,[2,146]),o(V62,[2,139]),o(V62,[2,140]),o(Vt,[2,35]),o(VN1,[2,249]),o(Vj2,[2,250],{91:455}),o(Vn,Vz,{140:122,136:456,139:457,40:[2,294]}),o(VB,[2,52]),o(VP1,[2,29],{80:[1,458]}),o(VP1,[2,30],{78:[1,459]}),o(Vh1,[2,24],{74:246,64:247,65:248,238:250,244:255,247:258,52:259,76:401,72:460,12:V7,15:V8,27:V82,28:Vi1,73:V92,75:Va2,239:Vj1,240:Vk1,241:Vl1,243:Vm1,245:Vn1,246:Vo1,248:Vp1,249:Vq1,252:Vr1,254:Vs1,274:Va,307:Vt1,308:Vu1,309:Vv1,310:Vw1,311:Vx1,312:Vy1}),o(Vk2,[2,242]),{28:Vi1,74:461},{28:Vi1,74:462},o(Vk2,[2,27]),o(Vk2,[2,28]),o([6,12,15,27,28,30,31,38,40,70,73,75,78,79,80,82,107,155,156,158,161,162,163,192,210,213,214,222,237,239,240,241,242,243,245,246,248,249,252,254,260,261,262,263,264,265,266,267,268,269,270,271,272,273,274,280,291,295,298,299,300,301,302,303,304,305,306,307,308,309,310,311,312],[2,147]),{31:[1,463]},{242:[1,464]},{242:[1,465]},o(V11,V21,{215:176,29:466}),{31:[1,467]},{31:[1,468]},o(VS1,[2,157]),o(V11,[2,326],{165:469}),o(V11,[2,325]),o(V11,V21,{215:176,251:470,29:472,280:[1,471]}),o(Vb2,[2,407]),o(V11,V21,{215:176,29:473}),o(V11,[2,411]),o(V11,V21,{215:176,29:474}),o(V11,[2,413]),o(VY1,[2,20]),{27:[1,475]},{40:[2,6]},{40:[2,199]},o(Vn,V71,{151:200,149:476,150:477,38:Vl2,40:Vl2,82:Vl2,107:Vl2,155:Vl2,156:Vl2,158:Vl2,161:Vl2,162:Vl2}),o(Vc2,[2,309]),o(Ve2,[2,67],{292:[1,478]}),o(Ve2,[2,68]),o(Ve2,[2,69]),{38:VF,54:479},{38:[2,318]},{38:[2,319]},{12:V7,15:V8,27:[1,481],52:482,160:480,274:Va},o(Vd2,[2,321]),o(Ve2,[2,72]),o(V11,V21,{215:176,29:483}),{12:V7,15:V8,27:VG,28:VC1,52:145,79:VI,88:146,163:VJ,172:360,185:361,189:484,210:VD1,213:VL,214:VM,227:156,229:157,257:152,260:VN,261:VO,262:VP,263:VQ,264:VR,265:VS,266:VT,267:VU,268:VV,269:VW,270:VX,271:VY,272:VZ,273:V_,274:Va},o(VF1,[2,98],{294:[1,485]}),o(Vm2,[2,363],{198:486,202:487,208:[1,488]}),o(Vc1,[2,115]),o(VF1,[2,372]),o(Vc1,[2,116]),o(Vg2,[2,339]),o(Vn2,[2,92],{242:[1,489]}),o(V42,[2,130]),{28:VT1,163:VU1,166:490},o(V52,[2,386]),o(VH1,VI1,{231:299,235:300,223:491,203:VJ1,237:VK1,298:VL1}),o(V62,[2,389],{228:492}),o(V62,[2,391],{230:493}),o(V11,[2,387]),o(V11,[2,388]),o(V62,[2,394]),o(VH1,VI1,{235:300,231:494,203:VJ1,237:VK1,298:VL1}),o(V11,[2,395]),o(V11,[2,396]),{12:V7,15:V8,31:[1,495],52:225,79:VI,87:496,88:226,89:Vf1,227:156,229:157,257:152,260:VN,261:VO,262:VP,263:VQ,264:VR,265:VS,266:VT,267:VU,268:VV,269:VW,270:VX,271:VY,272:VZ,273:V_,274:Va},{40:[1,497]},{40:[2,295]},{79:[1,498]},{79:[1,499]},o(Vk2,[2,243]),o(Vk2,[2,25]),o(Vk2,[2,26]),o(VS1,[2,150]),o(V11,V21,{215:176,29:500}),o(V11,V21,{215:176,29:501}),{31:[1,502],242:[1,503]},o(VS1,[2,154]),o(VS1,[2,156]),o(V11,V21,{215:176,29:504}),{31:[1,505]},{31:[2,408]},{31:[2,409]},{31:[1,506]},{31:[2,414],192:[1,508],256:507},{31:[1,509]},o(VB1,[2,65]),o(VB1,[2,311]),{38:[2,317]},o(Ve2,[2,70]),{38:VF,54:510},{38:[2,322]},{38:[2,323]},{30:[1,511]},o(Vn2,[2,350],{190:512,242:[1,513]}),o(V_1,[2,355]),o([12,15,27,28,31,79,163,210,213,214,260,261,262,263,264,265,266,267,268,269,270,271,272,273,274,294],[2,99],{295:[1,514]}),{12:V7,15:V8,28:[1,520],52:517,181:[1,518],199:515,200:516,203:[1,519],274:Va},o(Vm2,[2,364]),o(Vn,[2,343]),o(V42,[2,131]),o(V52,[2,133]),o(V52,[2,134],{234:452,233:521,280:Vh2,295:Vi2}),o(V52,[2,135],{234:452,233:522,280:Vh2,295:Vi2}),o(V62,[2,137]),o(VN1,[2,39]),o(Vj2,[2,251]),o(Vo2,[2,296],{137:523,291:[1,524]}),o(VP1,[2,31]),o(VP1,[2,32]),{31:[1,525]},{242:[1,526]},o(VS1,[2,81]),o(V11,[2,329]),{31:[1,527],242:[1,528]},o(VS1,[2,158]),o(VS1,[2,159]),{31:[1,529]},{313:[1,530]},o(VY1,[2,21]),o(Ve2,[2,71]),{27:[1,531]},o([38,40,82,107,155,156,158,161,162,211,291],[2,95],{191:532,192:[1,533]}),o(Vn,[2,349]),o(V_1,[2,357]),o(Vp2,[2,101]),o(Vp2,[2,361],{201:534,296:535,280:[1,537],297:[1,536],298:[1,538]}),o(Vq2,[2,102]),o(Vq2,[2,103]),{12:V7,15:V8,28:[1,542],52:543,163:[1,541],181:Vr2,204:539,205:540,208:Vs2,274:Va},o(V_1,V$1,{195:355,194:546}),o(V62,[2,390]),o(V62,[2,392]),o(Vn,Vz,{140:122,138:547,139:548,40:Vt2,107:Vt2}),o(Vo2,[2,297]),o(VS1,[2,151]),o(V11,V21,{215:176,29:549}),o(VS1,[2,79]),o(V11,[2,327]),o(VS1,[2,160]),{301:[1,550]},{31:[1,551]},o(Vn2,[2,351]),o(Vn2,[2,96],{195:355,193:552,194:553,12:V$1,15:V$1,28:V$1,181:V$1,203:V$1,208:V$1,274:V$1,27:[1,554]}),o(Vp2,[2,100]),o(Vp2,[2,362]),o(Vp2,[2,358]),o(Vp2,[2,359]),o(Vp2,[2,360]),o(Vq2,[2,104]),o(Vq2,[2,106]),o(Vq2,[2,107]),o(Vu2,[2,365],{206:555}),o(Vq2,[2,109]),o(Vq2,[2,110]),{12:V7,15:V8,52:556,181:[1,557],274:Va},{31:[1,558]},o(V51,[2,60]),o(V51,[2,299]),{31:[1,559]},{257:560,264:VR,265:VS,266:VT,267:VU},o(Ve2,[2,73]),o(Vn,V22,{182:367,180:561}),o(Vn,[2,352]),o(Vn,[2,353]),{12:V7,15:V8,31:[2,367],52:543,181:Vr2,205:563,207:562,208:Vs2,274:Va},o(Vq2,[2,111]),o(Vq2,[2,112]),o(Vq2,[2,105]),o(VS1,[2,152]),{31:[2,415]},o(Vn2,[2,97]),{31:[1,564]},{31:[2,368],294:[1,565]},o(Vq2,[2,108]),o(Vu2,[2,366])],
-defaultActions: {5:[2,188],6:[2,189],22:[2,1],23:[2,2],24:[2,195],74:[2,268],89:[2,229],94:[2,331],204:[2,213],205:[2,83],268:[2,405],307:[2,292],308:[2,293],378:[2,384],421:[2,6],422:[2,199],429:[2,318],430:[2,319],457:[2,295],471:[2,408],472:[2,409],478:[2,317],481:[2,322],482:[2,323],560:[2,415]},
+table: [o($V0,[2,187],{3:1,4:2}),{1:[3]},o($V1,[2,253],{5:3,278:4,7:5,92:6,10:7,13:8,8:9,93:10,16:13,32:14,41:15,46:16,17:17,11:[1,11],14:[1,12],23:$V2,33:[1,18],42:[1,19],47:[1,20]}),{6:[1,22]},o($V0,[2,188]),{6:[2,189]},{6:[2,190]},o($V0,[2,185]),o($V0,[2,186]),{6:[2,195],9:23,81:24,82:$V3},{94:26,95:[1,27],98:28,101:29,105:[1,30],108:[1,31],110:[1,32],111:[1,33],112:34,116:35,120:[2,276],121:[2,270],125:41,126:[1,42],288:[1,36],289:[1,37],290:[1,38],291:[1,39],292:[1,40]},{12:[1,43]},{15:[1,44]},o($V4,[2,191]),o($V4,[2,192]),o($V4,[2,193]),o($V4,[2,194]),o($V5,[2,197],{18:45}),o($V6,[2,211],{34:46,36:47,38:[1,48]}),{12:$V7,15:$V8,27:$V9,43:49,52:54,277:$Va,283:[1,51],284:52,285:50},o($V5,[2,225],{48:58}),o($Vb,[2,203],{24:59,279:60,280:[1,61],281:[1,62]}),{1:[2,1]},{6:[2,2]},{6:[2,196]},{27:[1,64],28:[1,65],83:63},{6:[2,40],192:[1,66]},o($Vc,[2,255],{96:67,287:[1,68]}),o($Vd,[2,261],{99:69,287:[1,70]}),o($Ve,[2,266],{102:71,287:[1,72]}),{106:73,107:[2,268],287:[1,74]},{38:$Vf,109:75},{38:$Vf,109:77},{38:$Vf,109:78},{113:79,121:$Vg},{117:81,120:$Vh},o($Vi,[2,259]),o($Vi,[2,260]),o($Vj,[2,263]),o($Vj,[2,264]),o($Vj,[2,265]),{120:[2,277],121:[2,271]},{12:$V7,15:$V8,52:83,277:$Va},o($V0,[2,3]),{12:[1,84]},{19:85,37:$Vk,38:$Vl,49:86,50:$Vm,53:87},o($V5,[2,209],{35:90}),{37:[1,91],49:92,50:$Vm},o($Vn,[2,333],{168:93,169:94,170:95,40:[2,331]}),o($Vo,[2,221],{44:96}),o($Vo,[2,219],{52:54,284:97,12:$V7,15:$V8,27:$V9,277:$Va}),o($Vo,[2,220]),o($Vp,[2,217]),o($Vp,[2,215]),o($Vp,[2,216]),o($Vq,[2,182]),o($Vq,[2,183]),o($Vq,[2,184]),{19:98,37:$Vk,38:$Vl,49:99,50:$Vm,53:87},{25:100,26:103,27:$Vr,28:$Vs,282:101,283:[1,102]},o($Vb,[2,204]),o($Vb,[2,201]),o($Vb,[2,202]),o($Vt,[2,33]),{38:[1,106]},o($Vu,[2,247],{85:107}),o($V1,[2,254]),{12:$V7,15:$V8,52:108,277:$Va},o($Vc,[2,256]),{100:109,107:[1,110],129:[1,112],131:111,286:[1,113],293:[1,114]},o($Vd,[2,262]),o($Vc,$Vv,{103:115,130:117,107:$Vw,129:$Vx}),o($Ve,[2,267]),{107:[1,119]},{107:[2,269]},o($Vy,[2,45]),o($Vn,$Vz,{132:120,139:121,140:122,40:$VA,107:$VA}),o($Vy,[2,46]),o($Vy,[2,47]),o($VB,[2,272],{114:123,117:124,120:$Vh}),{38:$Vf,109:125},o($VB,[2,278],{118:126,113:127,121:$Vg}),{38:$Vf,109:128},o([120,121],[2,53]),o($V0,[2,4]),o($VC,$VD,{20:129,55:130,59:131,60:$VE}),o($V5,[2,198]),{38:$VF,54:133},o($Vc,[2,227],{51:135,286:[1,136]}),{38:[2,230]},{19:137,37:$Vk,38:$Vl,49:138,50:$Vm,53:87},{38:[1,139]},o($V6,[2,212]),{40:[1,140]},{40:[2,332]},{12:$V7,15:$V8,27:$VG,28:$VH,52:145,79:$VI,88:146,141:141,163:$VJ,172:142,174:143,210:$VK,213:$VL,214:$VM,227:156,229:157,260:152,263:$VN,264:$VO,265:$VP,266:$VQ,267:$VR,268:$VS,269:$VT,270:$VU,271:$VV,272:$VW,273:$VX,274:$VY,275:$VZ,276:$V_,277:$Va},o($V$,[2,223],{53:87,45:170,49:171,19:172,37:$Vk,38:$Vl,50:$Vm}),o($Vp,[2,218]),o($VC,$VD,{55:130,59:131,20:173,60:$VE}),o($V5,[2,226]),o($V5,[2,7]),o($V5,[2,207],{26:174,27:$Vr,28:$Vs}),o($V5,[2,208]),o($V01,[2,205]),o($V01,[2,8]),o($V11,$V21,{29:175,215:176}),o($V31,[2,245],{84:177}),{27:[1,179],31:[1,178]},o($Vy,[2,257],{97:180,127:181,128:[1,182]}),o($Vy,[2,42]),{12:$V7,15:$V8,52:183,277:$Va},o($Vy,[2,58]),o($Vy,[2,286]),o($Vy,[2,287]),o($Vy,[2,288]),{104:[1,184]},o($V41,[2,55]),{12:$V7,15:$V8,52:185,277:$Va},o($Vc,[2,285]),{12:$V7,15:$V8,52:186,277:$Va},o($V51,[2,291],{133:187}),o($V51,[2,290]),{12:$V7,15:$V8,27:$VG,28:$VH,52:145,79:$VI,88:146,141:188,163:$VJ,172:142,174:143,210:$VK,213:$VL,214:$VM,227:156,229:157,260:152,263:$VN,264:$VO,265:$VP,266:$VQ,267:$VR,268:$VS,269:$VT,270:$VU,271:$VV,272:$VW,273:$VX,274:$VY,275:$VZ,276:$V_,277:$Va},o($VB,[2,274],{115:189}),o($VB,[2,273]),o([37,120,123],[2,51]),o($VB,[2,280],{119:190}),o($VB,[2,279]),o([37,121,123],[2,50]),o($V4,[2,5]),o($V61,[2,233],{56:191,66:192,67:[1,193]}),o($VC,[2,232]),{61:[1,194]},o([6,40,60,67,70,78,80,82],[2,15]),o($Vn,$V71,{21:195,143:196,17:197,144:198,150:199,151:200,23:$V2,38:$V81,40:$V81,82:$V81,107:$V81,155:$V81,156:$V81,158:$V81,161:$V81,162:$V81}),{12:$V7,15:$V8,52:201,277:$Va},o($Vc,[2,228]),o($VC,$VD,{55:130,59:131,20:202,60:$VE}),o($V5,[2,210]),o($Vn,$Vz,{140:122,39:203,139:204,40:[2,213]}),o($V5,[2,82]),{40:[2,335],171:205,294:[1,206]},o($V91,$Va1,{173:207,177:208}),o($V91,$Va1,{177:208,175:209,176:210,173:211,40:$Vb1,107:$Vb1,294:$Vb1}),o($Vc1,[2,121]),o($Vc1,[2,122]),o($Vc1,[2,123]),o($Vc1,[2,124]),o($Vc1,[2,125]),o($Vc1,[2,126]),{12:$V7,15:$V8,27:$VG,28:$VH,52:145,79:$VI,88:146,163:$VJ,172:214,174:215,183:213,209:212,210:$VK,213:$VL,214:$VM,227:156,229:157,260:152,263:$VN,264:$VO,265:$VP,266:$VQ,267:$VR,268:$VS,269:$VT,270:$VU,271:$VV,272:$VW,273:$VX,274:$VY,275:$VZ,276:$V_,277:$Va},o($V91,$Va1,{177:208,173:216}),o($Vd1,[2,162],{261:[1,217],262:[1,218]}),o($Vd1,[2,165]),o($Vd1,[2,166]),o($Vd1,[2,167]),o($Vd1,[2,168]),o($Vd1,[2,169]),o($Vd1,[2,170]),o($Vd1,[2,171]),o($Ve1,[2,172]),o($Ve1,[2,173]),o($Ve1,[2,174]),o($Ve1,[2,175]),o($Vd1,[2,176]),o($Vd1,[2,177]),o($Vd1,[2,178]),o($Vd1,[2,179]),o($Vd1,[2,180]),o($Vd1,[2,181]),o($VC,$VD,{55:130,59:131,20:219,60:$VE}),o($Vo,[2,222]),o($V$,[2,224]),o($V4,[2,13]),o($V01,[2,206]),{30:[1,220]},o($V11,[2,376],{216:221,217:222}),{12:$V7,15:$V8,40:[1,223],52:225,79:$VI,87:224,88:226,89:$Vf1,227:156,229:157,260:152,263:$VN,264:$VO,265:$VP,266:$VQ,267:$VR,268:$VS,269:$VT,270:$VU,271:$VV,272:$VW,273:$VX,274:$VY,275:$VZ,276:$V_,277:$Va},{38:[1,228]},o($Vu,[2,248]),o($Vy,[2,41]),o($Vy,[2,258]),{107:[1,229]},o($Vy,[2,57]),o($Vc,$Vv,{130:117,103:230,107:$Vw,129:$Vx}),o($V41,[2,56]),o($Vy,[2,44]),{40:[1,231],107:[1,233],134:232},o($V51,[2,303],{142:234,294:[1,235]}),{37:[1,236],122:237,123:$Vg1},{37:[1,239],122:240,123:$Vg1},o($Vh1,[2,235],{57:241,69:242,70:[1,243]}),o($V61,[2,234]),{12:$V7,15:$V8,28:$Vi1,52:259,64:247,65:248,68:244,74:246,76:245,238:250,239:$Vj1,240:$Vk1,241:$Vl1,243:$Vm1,244:255,245:$Vn1,246:$Vo1,247:258,248:$Vp1,249:$Vq1,252:$Vr1,254:$Vs1,277:$Va,309:$Vt1,310:$Vu1,311:$Vv1,312:$Vw1,313:$Vx1,314:$Vy1},{12:$V7,15:$V8,27:$Vz1,28:$VA1,52:259,62:269,63:270,64:271,65:272,238:250,239:$Vj1,240:$Vk1,241:$Vl1,243:$Vm1,244:255,245:$Vn1,246:$Vo1,247:258,248:$Vp1,249:$Vq1,252:$Vr1,254:$Vs1,277:$Va,309:$Vt1,310:$Vu1,311:$Vv1,312:$Vw1,313:$Vx1,314:$Vy1},{40:[1,275]},{40:[1,276]},{19:277,37:$Vk,38:$Vl,53:87},o($VB1,[2,307],{145:278}),o($VB1,[2,306]),{12:$V7,15:$V8,27:$VG,28:$VC1,52:145,79:$VI,88:146,152:279,163:$VJ,172:280,185:281,210:$VD1,213:$VL,214:$VM,227:156,229:157,260:152,263:$VN,264:$VO,265:$VP,266:$VQ,267:$VR,268:$VS,269:$VT,270:$VU,271:$VV,272:$VW,273:$VX,274:$VY,275:$VZ,276:$V_,277:$Va},o($Vo,[2,14]),o($V4,[2,10]),{40:[1,284]},{40:[2,214]},{40:[2,83]},o($Vn,[2,334],{40:[2,336]}),o($VE1,[2,84]),{12:$V7,15:$V8,27:[1,287],52:288,178:285,179:286,181:[1,289],277:$Va},o($VE1,[2,85]),o($VE1,[2,86]),o($VE1,[2,338]),{12:$V7,15:$V8,27:$VG,28:$VH,31:[1,290],52:145,79:$VI,88:146,163:$VJ,172:214,174:215,183:291,210:$VK,213:$VL,214:$VM,227:156,229:157,260:152,263:$VN,264:$VO,265:$VP,266:$VQ,267:$VR,268:$VS,269:$VT,270:$VU,271:$VV,272:$VW,273:$VX,274:$VY,275:$VZ,276:$V_,277:$Va},o($VF1,[2,370]),o($VG1,[2,117]),o($VG1,[2,118]),{211:[1,292]},o($Vd1,[2,163]),{12:$V7,15:$V8,52:293,277:$Va},o($V4,[2,12]),{27:[1,294]},o([30,31,192,242],[2,127],{302:[1,295]}),o($VH1,$VI1,{218:296,219:297,223:298,231:299,235:300,203:$VJ1,237:$VK1,301:$VL1}),o($Vt,[2,34]),o($V31,[2,246]),o($VM1,[2,36]),o($VM1,[2,37]),o($VM1,[2,38]),o($VN1,[2,249],{86:304}),{12:$V7,15:$V8,52:305,277:$Va},o($Vy,[2,43]),o([6,37,120,121,123,192],[2,59]),o($V51,[2,292]),{12:$V7,15:$V8,27:[1,307],52:308,135:306,277:$Va},o($V51,[2,61]),o($Vn,[2,302],{40:$VO1,107:$VO1}),{38:$VF,54:309},o($VB,[2,275]),o($Vc,[2,282],{124:310,286:[1,311]}),{38:$VF,54:312},o($VB,[2,281]),o($VP1,[2,237],{58:313,77:314,78:[1,315],80:[1,316]}),o($Vh1,[2,236]),{61:[1,317]},o($V61,[2,23],{74:246,64:247,65:248,238:250,244:255,247:258,52:259,76:318,12:$V7,15:$V8,28:$Vi1,239:$Vj1,240:$Vk1,241:$Vl1,243:$Vm1,245:$Vn1,246:$Vo1,248:$Vp1,249:$Vq1,252:$Vr1,254:$Vs1,277:$Va,309:$Vt1,310:$Vu1,311:$Vv1,312:$Vw1,313:$Vx1,314:$Vy1}),o($VQ1,[2,241]),o($VR1,[2,75]),o($VR1,[2,76]),o($VR1,[2,77]),o($V11,$V21,{215:176,29:319}),o($VS1,[2,148]),{163:[1,320]},{28:[1,321]},{28:[1,322]},{28:[1,323]},{28:$VT1,163:$VU1,166:324},{28:[1,327]},{28:[1,329],163:[1,328]},{248:[1,330]},{28:$VV1,163:$VW1},{28:[1,333]},{28:[1,334]},{28:[1,335]},o($VX1,[2,400]),o($VX1,[2,401]),o($VX1,[2,402]),o($VX1,[2,403]),o($VX1,[2,404]),{248:[2,406]},o($VC,[2,17],{238:250,244:255,247:258,52:259,64:271,65:272,63:336,12:$V7,15:$V8,27:$Vz1,28:$VA1,239:$Vj1,240:$Vk1,241:$Vl1,243:$Vm1,245:$Vn1,246:$Vo1,248:$Vp1,249:$Vq1,252:$Vr1,254:$Vs1,277:$Va,309:$Vt1,310:$Vu1,311:$Vv1,312:$Vw1,313:$Vx1,314:$Vy1}),o($VY1,[2,239]),o($VY1,[2,18]),o($VY1,[2,19]),o($V11,$V21,{215:176,29:337}),o($VY1,[2,22]),o($VZ1,[2,62]),o($VZ1,[2,63]),o($VC,$VD,{55:130,59:131,20:338,60:$VE}),{38:[2,317],40:[2,64],81:348,82:$V3,107:[1,344],146:339,147:340,154:341,155:[1,342],156:[1,343],158:[1,345],161:[1,346],162:[1,347]},o($VB1,[2,315],{153:349,294:[1,350]}),o($V_1,$V$1,{184:351,187:352,194:353,195:355,27:$V02}),o($V12,[2,345],{187:352,194:353,195:355,186:356,184:357,12:$V$1,15:$V$1,28:$V$1,181:$V$1,203:$V$1,208:$V$1,277:$V$1,27:$V02}),{12:$V7,15:$V8,27:$VG,28:$VC1,52:145,79:$VI,88:146,163:$VJ,172:360,185:361,189:359,210:$VD1,212:358,213:$VL,214:$VM,227:156,229:157,260:152,263:$VN,264:$VO,265:$VP,266:$VQ,267:$VR,268:$VS,269:$VT,270:$VU,271:$VV,272:$VW,273:$VX,274:$VY,275:$VZ,276:$V_,277:$Va},o($V_1,$V$1,{187:352,194:353,195:355,184:362,27:$V02}),o($VC,$VD,{55:130,59:131,20:363,60:$VE}),o([40,107,211,294],[2,87],{296:364,192:[1,365]}),o($Vn,$V22,{180:366,182:367}),o($Vn,[2,89]),o($Vn,[2,90]),o($Vn,[2,91]),o($V32,[2,113]),o($VF1,[2,371]),o($V32,[2,114]),o($Vd1,[2,164]),{31:[1,368]},o($V11,[2,375]),o([30,31,192,242,302],[2,128],{303:[1,369]}),o($V42,[2,129],{220:370,221:371,222:[2,384],259:[1,372],304:[1,373],305:[1,374],306:[1,375],307:[1,376],308:[1,377],309:[1,378]}),o($V52,[2,386],{224:379}),o($V62,[2,394],{232:380}),{12:$V7,15:$V8,27:$V72,28:$Vi1,52:384,64:383,65:385,74:382,79:$VI,88:386,227:156,229:157,236:381,238:250,239:$Vj1,240:$Vk1,241:$Vl1,243:$Vm1,244:255,245:$Vn1,246:$Vo1,247:258,248:$Vp1,249:$Vq1,252:$Vr1,254:$Vs1,260:152,263:$VN,264:$VO,265:$VP,266:$VQ,267:$VR,268:$VS,269:$VT,270:$VU,271:$VV,272:$VW,273:$VX,274:$VY,275:$VZ,276:$V_,277:$Va,309:$Vt1,310:$Vu1,311:$Vv1,312:$Vw1,313:$Vx1,314:$Vy1},{12:$V7,15:$V8,27:$V72,28:$Vi1,52:384,64:383,65:385,74:382,79:$VI,88:386,227:156,229:157,236:388,238:250,239:$Vj1,240:$Vk1,241:$Vl1,243:$Vm1,244:255,245:$Vn1,246:$Vo1,247:258,248:$Vp1,249:$Vq1,252:$Vr1,254:$Vs1,260:152,263:$VN,264:$VO,265:$VP,266:$VQ,267:$VR,268:$VS,269:$VT,270:$VU,271:$VV,272:$VW,273:$VX,274:$VY,275:$VZ,276:$V_,277:$Va,309:$Vt1,310:$Vu1,311:$Vv1,312:$Vw1,313:$Vx1,314:$Vy1},{12:$V7,15:$V8,27:$V72,28:$Vi1,52:384,64:383,65:385,74:382,79:$VI,88:386,227:156,229:157,236:389,238:250,239:$Vj1,240:$Vk1,241:$Vl1,243:$Vm1,244:255,245:$Vn1,246:$Vo1,247:258,248:$Vp1,249:$Vq1,252:$Vr1,254:$Vs1,260:152,263:$VN,264:$VO,265:$VP,266:$VQ,267:$VR,268:$VS,269:$VT,270:$VU,271:$VV,272:$VW,273:$VX,274:$VY,275:$VZ,276:$V_,277:$Va,309:$Vt1,310:$Vu1,311:$Vv1,312:$Vw1,313:$Vx1,314:$Vy1},o($VH1,[2,399]),{28:[1,392],40:[1,390],90:391},o($Vy,[2,54]),{38:[1,393]},{38:[2,293]},{38:[2,294]},o($Vy,[2,48]),{12:$V7,15:$V8,52:394,277:$Va},o($Vc,[2,283]),o($Vy,[2,49]),o($VP1,[2,16]),o($VP1,[2,238]),{79:[1,395]},{79:[1,396]},{12:$V7,15:$V8,27:$V82,28:$Vi1,52:259,64:247,65:248,71:397,72:398,73:$V92,74:246,75:$Va2,76:401,238:250,239:$Vj1,240:$Vk1,241:$Vl1,243:$Vm1,244:255,245:$Vn1,246:$Vo1,247:258,248:$Vp1,249:$Vq1,252:$Vr1,254:$Vs1,277:$Va,309:$Vt1,310:$Vu1,311:$Vv1,312:$Vw1,313:$Vx1,314:$Vy1},o($VQ1,[2,242]),{31:[1,403]},o($VS1,[2,149]),o($V11,$V21,{215:176,29:404}),o($V11,$V21,{215:176,29:405}),o($V11,$V21,{215:176,29:406}),o($VS1,[2,153]),o($VS1,[2,80]),o($V11,[2,329],{167:407}),{27:[1,408]},o($VS1,[2,155]),o($V11,$V21,{215:176,29:409}),{38:$VF,54:410},o($VS1,[2,78]),o($V11,[2,325],{164:411,280:[1,412]}),o($Vb2,[2,407],{250:413,280:[1,414]}),o($V11,[2,411],{253:415,280:[1,416]}),o($V11,[2,413],{255:417,280:[1,418]}),o($VY1,[2,240]),{30:[1,420],31:[1,419]},{22:421,40:[2,199],81:422,82:$V3},o($VB1,[2,308]),o($Vc2,[2,309],{148:423,294:[1,424]}),{38:$VF,54:425},{38:$VF,54:426},{38:$VF,54:427},{12:$V7,15:$V8,27:[1,429],52:430,157:428,277:$Va},o($Vd2,[2,321],{159:431,287:[1,432]}),{12:$V7,15:$V8,28:$Vi1,52:259,64:247,65:248,74:246,76:433,238:250,239:$Vj1,240:$Vk1,241:$Vl1,243:$Vm1,244:255,245:$Vn1,246:$Vo1,247:258,248:$Vp1,249:$Vq1,252:$Vr1,254:$Vs1,277:$Va,309:$Vt1,310:$Vu1,311:$Vv1,312:$Vw1,313:$Vx1,314:$Vy1},{28:[1,434]},o($Ve2,[2,74]),o($VB1,[2,66]),o($Vn,[2,314],{38:$Vf2,40:$Vf2,82:$Vf2,107:$Vf2,155:$Vf2,156:$Vf2,158:$Vf2,161:$Vf2,162:$Vf2}),o($V12,[2,93]),o($Vn,[2,349],{188:435}),o($Vn,[2,347]),o($Vn,[2,348]),o($V_1,[2,357],{196:436,197:437}),o($V12,[2,94]),o($V12,[2,346]),{12:$V7,15:$V8,27:$VG,28:$VC1,31:[1,438],52:145,79:$VI,88:146,163:$VJ,172:360,185:361,189:439,210:$VD1,213:$VL,214:$VM,227:156,229:157,260:152,263:$VN,264:$VO,265:$VP,266:$VQ,267:$VR,268:$VS,269:$VT,270:$VU,271:$VV,272:$VW,273:$VX,274:$VY,275:$VZ,276:$V_,277:$Va},o($VF1,[2,372]),o($VG1,[2,119]),o($VG1,[2,120]),{211:[1,440]},o($V4,[2,11]),o($V91,[2,342],{192:[1,441]}),o($Vg2,[2,339]),o([40,107,192,211,294],[2,88]),{12:$V7,15:$V8,27:$VG,28:$VH,52:145,79:$VI,88:146,163:$VJ,172:214,174:215,183:442,210:$VK,213:$VL,214:$VM,227:156,229:157,260:152,263:$VN,264:$VO,265:$VP,266:$VQ,267:$VR,268:$VS,269:$VT,270:$VU,271:$VV,272:$VW,273:$VX,274:$VY,275:$VZ,276:$V_,277:$Va},o($V01,[2,9]),o($V11,[2,377]),o($VH1,$VI1,{223:298,231:299,235:300,219:443,203:$VJ1,237:$VK1,301:$VL1}),{222:[1,444]},o($V11,[2,378]),o($V11,[2,379]),o($V11,[2,380]),o($V11,[2,381]),o($V11,[2,382]),o($V11,[2,383]),{222:[2,385]},o([30,31,192,222,242,259,302,303,304,305,306,307,308,309],[2,132],{225:445,226:446,227:447,229:448,237:[1,450],271:$VV,272:$VW,273:$VX,274:$VY,275:$VZ,276:$V_,301:[1,449]}),o($V52,[2,136],{233:451,234:452,283:$Vh2,298:$Vi2}),o($V62,[2,138]),o($V62,[2,141]),o($V62,[2,142]),o($V62,[2,143],{28:$VV1,163:$VW1}),o($V62,[2,144]),o($V62,[2,145]),o($V62,[2,146]),o($V62,[2,139]),o($V62,[2,140]),o($Vt,[2,35]),o($VN1,[2,250]),o($Vj2,[2,251],{91:455}),o($Vn,$Vz,{140:122,136:456,139:457,40:[2,295]}),o($VB,[2,52]),o($VP1,[2,29],{80:[1,458]}),o($VP1,[2,30],{78:[1,459]}),o($Vh1,[2,24],{74:246,64:247,65:248,238:250,244:255,247:258,52:259,76:401,72:460,12:$V7,15:$V8,27:$V82,28:$Vi1,73:$V92,75:$Va2,239:$Vj1,240:$Vk1,241:$Vl1,243:$Vm1,245:$Vn1,246:$Vo1,248:$Vp1,249:$Vq1,252:$Vr1,254:$Vs1,277:$Va,309:$Vt1,310:$Vu1,311:$Vv1,312:$Vw1,313:$Vx1,314:$Vy1}),o($Vk2,[2,243]),{28:$Vi1,74:461},{28:$Vi1,74:462},o($Vk2,[2,27]),o($Vk2,[2,28]),o([6,12,15,27,28,30,31,38,40,70,73,75,78,79,80,82,107,155,156,158,161,162,163,192,210,213,214,222,237,239,240,241,242,243,245,246,248,249,252,254,259,263,264,265,266,267,268,269,270,271,272,273,274,275,276,277,283,294,298,301,302,303,304,305,306,307,308,309,310,311,312,313,314],[2,147]),{31:[1,463]},{242:[1,464]},{242:[1,465]},o($V11,$V21,{215:176,29:466}),{31:[1,467]},{31:[1,468]},o($VS1,[2,157]),o($V11,[2,327],{165:469}),o($V11,[2,326]),o($V11,$V21,{215:176,251:470,29:472,283:[1,471]}),o($Vb2,[2,408]),o($V11,$V21,{215:176,29:473}),o($V11,[2,412]),o($V11,$V21,{215:176,29:474}),o($V11,[2,414]),o($VY1,[2,20]),{27:[1,475]},{40:[2,6]},{40:[2,200]},o($Vn,$V71,{151:200,149:476,150:477,38:$Vl2,40:$Vl2,82:$Vl2,107:$Vl2,155:$Vl2,156:$Vl2,158:$Vl2,161:$Vl2,162:$Vl2}),o($Vc2,[2,310]),o($Ve2,[2,67],{295:[1,478]}),o($Ve2,[2,68]),o($Ve2,[2,69]),{38:$VF,54:479},{38:[2,319]},{38:[2,320]},{12:$V7,15:$V8,27:[1,481],52:482,160:480,277:$Va},o($Vd2,[2,322]),o($Ve2,[2,72]),o($V11,$V21,{215:176,29:483}),{12:$V7,15:$V8,27:$VG,28:$VC1,52:145,79:$VI,88:146,163:$VJ,172:360,185:361,189:484,210:$VD1,213:$VL,214:$VM,227:156,229:157,260:152,263:$VN,264:$VO,265:$VP,266:$VQ,267:$VR,268:$VS,269:$VT,270:$VU,271:$VV,272:$VW,273:$VX,274:$VY,275:$VZ,276:$V_,277:$Va},o($VF1,[2,98],{297:[1,485]}),o($Vm2,[2,364],{198:486,202:487,208:[1,488]}),o($Vc1,[2,115]),o($VF1,[2,373]),o($Vc1,[2,116]),o($Vg2,[2,340]),o($Vn2,[2,92],{242:[1,489]}),o($V42,[2,130]),{28:$VT1,163:$VU1,166:490},o($V52,[2,387]),o($VH1,$VI1,{231:299,235:300,223:491,203:$VJ1,237:$VK1,301:$VL1}),o($V62,[2,390],{228:492}),o($V62,[2,392],{230:493}),o($V11,[2,388]),o($V11,[2,389]),o($V62,[2,395]),o($VH1,$VI1,{235:300,231:494,203:$VJ1,237:$VK1,301:$VL1}),o($V11,[2,396]),o($V11,[2,397]),{12:$V7,15:$V8,31:[1,495],52:225,79:$VI,87:496,88:226,89:$Vf1,227:156,229:157,260:152,263:$VN,264:$VO,265:$VP,266:$VQ,267:$VR,268:$VS,269:$VT,270:$VU,271:$VV,272:$VW,273:$VX,274:$VY,275:$VZ,276:$V_,277:$Va},{40:[1,497]},{40:[2,296]},{79:[1,498]},{79:[1,499]},o($Vk2,[2,244]),o($Vk2,[2,25]),o($Vk2,[2,26]),o($VS1,[2,150]),o($V11,$V21,{215:176,29:500}),o($V11,$V21,{215:176,29:501}),{31:[1,502],242:[1,503]},o($VS1,[2,154]),o($VS1,[2,156]),o($V11,$V21,{215:176,29:504}),{31:[1,505]},{31:[2,409]},{31:[2,410]},{31:[1,506]},{31:[2,415],192:[1,509],256:507,257:508},{31:[1,510]},o($VB1,[2,65]),o($VB1,[2,312]),{38:[2,318]},o($Ve2,[2,70]),{38:$VF,54:511},{38:[2,323]},{38:[2,324]},{30:[1,512]},o($Vn2,[2,351],{190:513,242:[1,514]}),o($V_1,[2,356]),o([12,15,27,28,31,79,163,210,213,214,263,264,265,266,267,268,269,270,271,272,273,274,275,276,277,297],[2,99],{298:[1,515]}),{12:$V7,15:$V8,28:[1,521],52:518,181:[1,519],199:516,200:517,203:[1,520],277:$Va},o($Vm2,[2,365]),o($Vn,[2,344]),o($V42,[2,131]),o($V52,[2,133]),o($V52,[2,134],{234:452,233:522,283:$Vh2,298:$Vi2}),o($V52,[2,135],{234:452,233:523,283:$Vh2,298:$Vi2}),o($V62,[2,137]),o($VN1,[2,39]),o($Vj2,[2,252]),o($Vo2,[2,297],{137:524,294:[1,525]}),o($VP1,[2,31]),o($VP1,[2,32]),{31:[1,526]},{242:[1,527]},o($VS1,[2,81]),o($V11,[2,330]),{31:[1,528],242:[1,529]},o($VS1,[2,158]),o($VS1,[2,159]),{31:[1,530]},{31:[2,416]},{258:[1,531]},o($VY1,[2,21]),o($Ve2,[2,71]),{27:[1,532]},o([38,40,82,107,155,156,158,161,162,211,294],[2,95],{191:533,192:[1,534]}),o($Vn,[2,350]),o($V_1,[2,358]),o($Vp2,[2,101]),o($Vp2,[2,362],{201:535,299:536,283:[1,538],300:[1,537],301:[1,539]}),o($Vq2,[2,102]),o($Vq2,[2,103]),{12:$V7,15:$V8,28:[1,543],52:544,163:[1,542],181:$Vr2,204:540,205:541,208:$Vs2,277:$Va},o($V_1,$V$1,{195:355,194:547}),o($V62,[2,391]),o($V62,[2,393]),o($Vn,$Vz,{140:122,138:548,139:549,40:$Vt2,107:$Vt2}),o($Vo2,[2,298]),o($VS1,[2,151]),o($V11,$V21,{215:176,29:550}),o($VS1,[2,79]),o($V11,[2,328]),o($VS1,[2,160]),{259:[1,551]},{31:[1,552]},o($Vn2,[2,352]),o($Vn2,[2,96],{195:355,193:553,194:554,12:$V$1,15:$V$1,28:$V$1,181:$V$1,203:$V$1,208:$V$1,277:$V$1,27:[1,555]}),o($Vp2,[2,100]),o($Vp2,[2,363]),o($Vp2,[2,359]),o($Vp2,[2,360]),o($Vp2,[2,361]),o($Vq2,[2,104]),o($Vq2,[2,106]),o($Vq2,[2,107]),o($Vu2,[2,366],{206:556}),o($Vq2,[2,109]),o($Vq2,[2,110]),{12:$V7,15:$V8,52:557,181:[1,558],277:$Va},{31:[1,559]},o($V51,[2,60]),o($V51,[2,300]),{31:[1,560]},{260:561,267:$VR,268:$VS,269:$VT,270:$VU},o($Ve2,[2,73]),o($Vn,$V22,{182:367,180:562}),o($Vn,[2,353]),o($Vn,[2,354]),{12:$V7,15:$V8,31:[2,368],52:544,181:$Vr2,205:564,207:563,208:$Vs2,277:$Va},o($Vq2,[2,111]),o($Vq2,[2,112]),o($Vq2,[2,105]),o($VS1,[2,152]),{31:[2,161]},o($Vn2,[2,97]),{31:[1,565]},{31:[2,369],297:[1,566]},o($Vq2,[2,108]),o($Vu2,[2,367])],
+defaultActions: {5:[2,189],6:[2,190],22:[2,1],23:[2,2],24:[2,196],74:[2,269],89:[2,230],94:[2,332],204:[2,214],205:[2,83],268:[2,406],307:[2,293],308:[2,294],378:[2,385],421:[2,6],422:[2,200],429:[2,319],430:[2,320],457:[2,296],471:[2,409],472:[2,410],478:[2,318],481:[2,323],482:[2,324],508:[2,416],561:[2,161]},
 parseError: function parseError(str, hash) {
     if (hash.recoverable) {
         this.trace(str);
@@ -13996,16 +14956,251 @@ var YYSTATE=YY_START;
 switch($avoiding_name_collisions) {
 case 0:/* ignore */
 break;
+case 1:return 11
+break;
+case 2:return 14
+break;
+case 3:return 23
+break;
+case 4:return 280
+break;
+case 5:return 281
+break;
+case 6:return 28
+break;
+case 7:return 30
+break;
+case 8:return 31
+break;
+case 9:return 283
+break;
+case 10:return 33
+break;
+case 11:return 37
+break;
+case 12:return 38
+break;
+case 13:return 40
+break;
+case 14:return 42
+break;
+case 15:return 47
+break;
+case 16:return 50
+break;
+case 17:return 286
+break;
+case 18:return 60
+break;
+case 19:return 61
+break;
+case 20:return 67
+break;
+case 21:return 70
+break;
+case 22:return 73
+break;
+case 23:return 75
+break;
+case 24:return 78
+break;
+case 25:return 80
+break;
+case 26:return 82
+break;
+case 27:return 192
+break;
+case 28:return 95
+break;
+case 29:return 287
+break;
+case 30:return 128
+break;
+case 31:return 288
+break;
+case 32:return 289
+break;
+case 33:return 105
+break;
+case 34:return 290
+break;
+case 35:return 104
+break;
+case 36:return 291
+break;
+case 37:return 292
+break;
+case 38:return 108
+break;
+case 39:return 110
+break;
+case 40:return 111
+break;
+case 41:return 126
+break;
+case 42:return 120
+break;
+case 43:return 121
+break;
+case 44:return 123
+break;
+case 45:return 129
+break;
+case 46:return 107
+break;
+case 47:return 293
+break;
+case 48:return 294
+break;
+case 49:return 155
+break;
+case 50:return 158
+break;
+case 51:return 162
+break;
+case 52:return 89
+break;
+case 53:return 156
+break;
+case 54:return 295
+break;
+case 55:return 161
+break;
+case 56:return 242
+break;
+case 57:return 181
+break;
+case 58:return 297
+break;
+case 59:return 298
+break;
+case 60:return 208
+break;
+case 61:return 300
+break;
+case 62:return 301
+break;
+case 63:return 203
+break;
+case 64:return 210
+break;
+case 65:return 211
+break;
+case 66:return 302
+break;
+case 67:return 303
+break;
+case 68:return 259
+break;
+case 69:return 304
+break;
+case 70:return 305
+break;
+case 71:return 306
+break;
+case 72:return 307
+break;
+case 73:return 308
+break;
+case 74:return 222
+break;
+case 75:return 309
+break;
+case 76:return 237
+break;
+case 77:return 245
+break;
+case 78:return 246
+break;
+case 79:return 239
+break;
+case 80:return 240
+break;
+case 81:return 241
+break;
+case 82:return 310
+break;
+case 83:return 311
+break;
+case 84:return 243
+break;
+case 85:return 313
+break;
+case 86:return 312
+break;
+case 87:return 314
+break;
+case 88:return 248
+break;
+case 89:return 249
+break;
+case 90:return 252
+break;
+case 91:return 254
+break;
+case 92:return 258
+break;
+case 93:return 262
+break;
+case 94:return 265
+break;
+case 95:return 266
+break;
+case 96:return 12
+break;
+case 97:return 15
+break;
+case 98:return 277
+break;
+case 99:return 213
+break;
+case 100:return 27
+break;
+case 101:return 261
+break;
+case 102:return 79
+break;
+case 103:return 263
+break;
+case 104:return 264
+break;
+case 105:return 271
+break;
+case 106:return 272
+break;
+case 107:return 273
+break;
+case 108:return 274
+break;
+case 109:return 275
+break;
+case 110:return 276
+break;
+case 111:return 'EXPONENT'
+break;
+case 112:return 267
+break;
+case 113:return 268
+break;
+case 114:return 269
+break;
+case 115:return 270
+break;
+case 116:return 163
+break;
+case 117:return 214
+break;
+case 118:return 6
+break;
+case 119:return 'INVALID'
+break;
 case 120:console.log(yy_.yytext);
 break;
-default:
-  return $case_helper[$avoiding_name_collisions]
 }
 },
-rules: [/^(?:\s+|#[^\n\r]*)/i,/^(?:BASE)/i,/^(?:PREFIX)/i,/^(?:SELECT)/i,/^(?:DISTINCT)/i,/^(?:REDUCED)/i,/^(?:\()/i,/^(?:AS)/i,/^(?:\))/i,/^(?:\*)/i,/^(?:CONSTRUCT)/i,/^(?:WHERE)/i,/^(?:\{)/i,/^(?:\})/i,/^(?:DESCRIBE)/i,/^(?:ASK)/i,/^(?:FROM)/i,/^(?:NAMED)/i,/^(?:GROUP)/i,/^(?:BY)/i,/^(?:HAVING)/i,/^(?:ORDER)/i,/^(?:ASC)/i,/^(?:DESC)/i,/^(?:LIMIT)/i,/^(?:OFFSET)/i,/^(?:VALUES)/i,/^(?:;)/i,/^(?:LOAD)/i,/^(?:SILENT)/i,/^(?:INTO)/i,/^(?:CLEAR)/i,/^(?:DROP)/i,/^(?:CREATE)/i,/^(?:ADD)/i,/^(?:TO)/i,/^(?:MOVE)/i,/^(?:COPY)/i,/^(?:INSERT\s+DATA)/i,/^(?:DELETE\s+DATA)/i,/^(?:DELETE\s+WHERE)/i,/^(?:WITH)/i,/^(?:DELETE)/i,/^(?:INSERT)/i,/^(?:USING)/i,/^(?:DEFAULT)/i,/^(?:GRAPH)/i,/^(?:ALL)/i,/^(?:\.)/i,/^(?:OPTIONAL)/i,/^(?:SERVICE)/i,/^(?:BIND)/i,/^(?:UNDEF)/i,/^(?:MINUS)/i,/^(?:UNION)/i,/^(?:FILTER)/i,/^(?:,)/i,/^(?:a)/i,/^(?:\|)/i,/^(?:\/)/i,/^(?:\^)/i,/^(?:\?)/i,/^(?:\+)/i,/^(?:!)/i,/^(?:\[)/i,/^(?:\])/i,/^(?:\|\|)/i,/^(?:&&)/i,/^(?:=)/i,/^(?:!=)/i,/^(?:<)/i,/^(?:>)/i,/^(?:<=)/i,/^(?:>=)/i,/^(?:IN)/i,/^(?:NOT)/i,/^(?:-)/i,/^(?:BOUND)/i,/^(?:BNODE)/i,/^(?:(RAND|NOW|UUID|STUUID))/i,/^(?:(STR|LANG|DATATYPE|IRI|URI|ABS|CEIL|FLOOR|ROUND|STRLEN|UCASE|LCASE|ENCODE_FOR_URI|YEAR|MONTH|DAY|HOURS|MINUTES|SECONDS|TIMEZONE|TZ|MD5|SHA1|SHA256|SHA384|SHA512|isIRI|isURI|isBLANK|isLITERAL|isNUMERIC))/i,/^(?:(LANGMATCHES|CONTAINS|STRSTARTS|STRENDS|STRBEFORE|STRAFTER|STRLANG|STRDT|sameTerm))/i,/^(?:CONCAT)/i,/^(?:COALESCE)/i,/^(?:IF)/i,/^(?:REGEX)/i,/^(?:SUBSTR)/i,/^(?:REPLACE)/i,/^(?:EXISTS)/i,/^(?:COUNT)/i,/^(?:SUM|MIN|MAX|AVG|SAMPLE)/i,/^(?:GROUP_CONCAT)/i,/^(?:SEPARATOR)/i,/^(?:\^\^)/i,/^(?:true)/i,/^(?:false)/i,/^(?:(<([^<>\"\{\}\|\^`\\\u0000-\u0020])*>))/i,/^(?:((([A-Z]|[a-z]|[\u00C0-\u00D6]|[\u00D8-\u00F6]|[\u00F8-\u02FF]|[\u0370-\u037D]|[\u037F-\u1FFF]|[\u200C-\u200D]|[\u2070-\u218F]|[\u2C00-\u2FEF]|[\u3001-\uD7FF]|[\uF900-\uFDCF]|[\uFDF0-\uFFFD]|[\uD800-\uDB7F][\uDC00-\uDFFF])(((((?:([A-Z]|[a-z]|[\u00C0-\u00D6]|[\u00D8-\u00F6]|[\u00F8-\u02FF]|[\u0370-\u037D]|[\u037F-\u1FFF]|[\u200C-\u200D]|[\u2070-\u218F]|[\u2C00-\u2FEF]|[\u3001-\uD7FF]|[\uF900-\uFDCF]|[\uFDF0-\uFFFD]|[\uD800-\uDB7F][\uDC00-\uDFFF])|_))|-|[0-9]|\u00B7|[\u0300-\u036F]|[\u203F-\u2040])|\.)*(((?:([A-Z]|[a-z]|[\u00C0-\u00D6]|[\u00D8-\u00F6]|[\u00F8-\u02FF]|[\u0370-\u037D]|[\u037F-\u1FFF]|[\u200C-\u200D]|[\u2070-\u218F]|[\u2C00-\u2FEF]|[\u3001-\uD7FF]|[\uF900-\uFDCF]|[\uFDF0-\uFFFD]|[\uD800-\uDB7F][\uDC00-\uDFFF])|_))|-|[0-9]|\u00B7|[\u0300-\u036F]|[\u203F-\u2040]))?)?:))/i,/^(?:(((([A-Z]|[a-z]|[\u00C0-\u00D6]|[\u00D8-\u00F6]|[\u00F8-\u02FF]|[\u0370-\u037D]|[\u037F-\u1FFF]|[\u200C-\u200D]|[\u2070-\u218F]|[\u2C00-\u2FEF]|[\u3001-\uD7FF]|[\uF900-\uFDCF]|[\uFDF0-\uFFFD]|[\uD800-\uDB7F][\uDC00-\uDFFF])(((((?:([A-Z]|[a-z]|[\u00C0-\u00D6]|[\u00D8-\u00F6]|[\u00F8-\u02FF]|[\u0370-\u037D]|[\u037F-\u1FFF]|[\u200C-\u200D]|[\u2070-\u218F]|[\u2C00-\u2FEF]|[\u3001-\uD7FF]|[\uF900-\uFDCF]|[\uFDF0-\uFFFD]|[\uD800-\uDB7F][\uDC00-\uDFFF])|_))|-|[0-9]|\u00B7|[\u0300-\u036F]|[\u203F-\u2040])|\.)*(((?:([A-Z]|[a-z]|[\u00C0-\u00D6]|[\u00D8-\u00F6]|[\u00F8-\u02FF]|[\u0370-\u037D]|[\u037F-\u1FFF]|[\u200C-\u200D]|[\u2070-\u218F]|[\u2C00-\u2FEF]|[\u3001-\uD7FF]|[\uF900-\uFDCF]|[\uFDF0-\uFFFD]|[\uD800-\uDB7F][\uDC00-\uDFFF])|_))|-|[0-9]|\u00B7|[\u0300-\u036F]|[\u203F-\u2040]))?)?:)((((?:([A-Z]|[a-z]|[\u00C0-\u00D6]|[\u00D8-\u00F6]|[\u00F8-\u02FF]|[\u0370-\u037D]|[\u037F-\u1FFF]|[\u200C-\u200D]|[\u2070-\u218F]|[\u2C00-\u2FEF]|[\u3001-\uD7FF]|[\uF900-\uFDCF]|[\uFDF0-\uFFFD]|[\uD800-\uDB7F][\uDC00-\uDFFF])|_))|:|[0-9]|((%([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f]))|(\\(_|~|\.|-|!|\$|&|'|\(|\)|\*|\+|,|;|=|\/|\?|#|@|%))))(((((?:([A-Z]|[a-z]|[\u00C0-\u00D6]|[\u00D8-\u00F6]|[\u00F8-\u02FF]|[\u0370-\u037D]|[\u037F-\u1FFF]|[\u200C-\u200D]|[\u2070-\u218F]|[\u2C00-\u2FEF]|[\u3001-\uD7FF]|[\uF900-\uFDCF]|[\uFDF0-\uFFFD]|[\uD800-\uDB7F][\uDC00-\uDFFF])|_))|-|[0-9]|\u00B7|[\u0300-\u036F]|[\u203F-\u2040])|\.|:|((%([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f]))|(\\(_|~|\.|-|!|\$|&|'|\(|\)|\*|\+|,|;|=|\/|\?|#|@|%))))*((((?:([A-Z]|[a-z]|[\u00C0-\u00D6]|[\u00D8-\u00F6]|[\u00F8-\u02FF]|[\u0370-\u037D]|[\u037F-\u1FFF]|[\u200C-\u200D]|[\u2070-\u218F]|[\u2C00-\u2FEF]|[\u3001-\uD7FF]|[\uF900-\uFDCF]|[\uFDF0-\uFFFD]|[\uD800-\uDB7F][\uDC00-\uDFFF])|_))|-|[0-9]|\u00B7|[\u0300-\u036F]|[\u203F-\u2040])|:|((%([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f]))|(\\(_|~|\.|-|!|\$|&|'|\(|\)|\*|\+|,|;|=|\/|\?|#|@|%)))))?)))/i,/^(?:(_:(((?:([A-Z]|[a-z]|[\u00C0-\u00D6]|[\u00D8-\u00F6]|[\u00F8-\u02FF]|[\u0370-\u037D]|[\u037F-\u1FFF]|[\u200C-\u200D]|[\u2070-\u218F]|[\u2C00-\u2FEF]|[\u3001-\uD7FF]|[\uF900-\uFDCF]|[\uFDF0-\uFFFD]|[\uD800-\uDB7F][\uDC00-\uDFFF])|_))|[0-9])(((((?:([A-Z]|[a-z]|[\u00C0-\u00D6]|[\u00D8-\u00F6]|[\u00F8-\u02FF]|[\u0370-\u037D]|[\u037F-\u1FFF]|[\u200C-\u200D]|[\u2070-\u218F]|[\u2C00-\u2FEF]|[\u3001-\uD7FF]|[\uF900-\uFDCF]|[\uFDF0-\uFFFD]|[\uD800-\uDB7F][\uDC00-\uDFFF])|_))|-|[0-9]|\u00B7|[\u0300-\u036F]|[\u203F-\u2040])|\.)*(((?:([A-Z]|[a-z]|[\u00C0-\u00D6]|[\u00D8-\u00F6]|[\u00F8-\u02FF]|[\u0370-\u037D]|[\u037F-\u1FFF]|[\u200C-\u200D]|[\u2070-\u218F]|[\u2C00-\u2FEF]|[\u3001-\uD7FF]|[\uF900-\uFDCF]|[\uFDF0-\uFFFD]|[\uD800-\uDB7F][\uDC00-\uDFFF])|_))|-|[0-9]|\u00B7|[\u0300-\u036F]|[\u203F-\u2040]))?))/i,/^(?:([\?\$]((((?:([A-Z]|[a-z]|[\u00C0-\u00D6]|[\u00D8-\u00F6]|[\u00F8-\u02FF]|[\u0370-\u037D]|[\u037F-\u1FFF]|[\u200C-\u200D]|[\u2070-\u218F]|[\u2C00-\u2FEF]|[\u3001-\uD7FF]|[\uF900-\uFDCF]|[\uFDF0-\uFFFD]|[\uD800-\uDB7F][\uDC00-\uDFFF])|_))|[0-9])(((?:([A-Z]|[a-z]|[\u00C0-\u00D6]|[\u00D8-\u00F6]|[\u00F8-\u02FF]|[\u0370-\u037D]|[\u037F-\u1FFF]|[\u200C-\u200D]|[\u2070-\u218F]|[\u2C00-\u2FEF]|[\u3001-\uD7FF]|[\uF900-\uFDCF]|[\uFDF0-\uFFFD]|[\uD800-\uDB7F][\uDC00-\uDFFF])|_))|[0-9]|\u00B7|[\u0300-\u036F]|[\u203F-\u2040])*)))/i,/^(?:(@[a-zA-Z]+(-[a-zA-Z0-9]+)*))/i,/^(?:([0-9]+))/i,/^(?:([0-9]*\.[0-9]+))/i,/^(?:([0-9]+\.[0-9]*([eE][+-]?[0-9]+)|\.([0-9])+([eE][+-]?[0-9]+)|([0-9])+([eE][+-]?[0-9]+)))/i,/^(?:(\+([0-9]+)))/i,/^(?:(\+([0-9]*\.[0-9]+)))/i,/^(?:(\+([0-9]+\.[0-9]*([eE][+-]?[0-9]+)|\.([0-9])+([eE][+-]?[0-9]+)|([0-9])+([eE][+-]?[0-9]+))))/i,/^(?:(-([0-9]+)))/i,/^(?:(-([0-9]*\.[0-9]+)))/i,/^(?:(-([0-9]+\.[0-9]*([eE][+-]?[0-9]+)|\.([0-9])+([eE][+-]?[0-9]+)|([0-9])+([eE][+-]?[0-9]+))))/i,/^(?:([eE][+-]?[0-9]+))/i,/^(?:('(([^\u0027\u005C\u000A\u000D])|(\\[tbnrf\\\"']|\\u([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f])|\\U([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f])))*'))/i,/^(?:("(([^\u0022\u005C\u000A\u000D])|(\\[tbnrf\\\"']|\\u([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f])|\\U([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f])))*"))/i,/^(?:('''(('|'')?([^'\\]|(\\[tbnrf\\\"']|\\u([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f])|\\U([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f]))))*'''))/i,/^(?:("""(("|"")?([^\"\\]|(\\[tbnrf\\\"']|\\u([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f])|\\U([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f]))))*"""))/i,/^(?:(\((\u0020|\u0009|\u000D|\u000A)*\)))/i,/^(?:(\[(\u0020|\u0009|\u000D|\u000A)*\]))/i,/^(?:$)/i,/^(?:.)/i,/^(?:.)/i],
+rules: [/^(?:\s+|#[^\n\r]*)/i,/^(?:BASE)/i,/^(?:PREFIX)/i,/^(?:SELECT)/i,/^(?:DISTINCT)/i,/^(?:REDUCED)/i,/^(?:\()/i,/^(?:AS)/i,/^(?:\))/i,/^(?:\*)/i,/^(?:CONSTRUCT)/i,/^(?:WHERE)/i,/^(?:\{)/i,/^(?:\})/i,/^(?:DESCRIBE)/i,/^(?:ASK)/i,/^(?:FROM)/i,/^(?:NAMED)/i,/^(?:GROUP)/i,/^(?:BY)/i,/^(?:HAVING)/i,/^(?:ORDER)/i,/^(?:ASC)/i,/^(?:DESC)/i,/^(?:LIMIT)/i,/^(?:OFFSET)/i,/^(?:VALUES)/i,/^(?:;)/i,/^(?:LOAD)/i,/^(?:SILENT)/i,/^(?:INTO)/i,/^(?:CLEAR)/i,/^(?:DROP)/i,/^(?:CREATE)/i,/^(?:ADD)/i,/^(?:TO)/i,/^(?:MOVE)/i,/^(?:COPY)/i,/^(?:INSERT\s+DATA)/i,/^(?:DELETE\s+DATA)/i,/^(?:DELETE\s+WHERE)/i,/^(?:WITH)/i,/^(?:DELETE)/i,/^(?:INSERT)/i,/^(?:USING)/i,/^(?:DEFAULT)/i,/^(?:GRAPH)/i,/^(?:ALL)/i,/^(?:\.)/i,/^(?:OPTIONAL)/i,/^(?:SERVICE)/i,/^(?:BIND)/i,/^(?:UNDEF)/i,/^(?:MINUS)/i,/^(?:UNION)/i,/^(?:FILTER)/i,/^(?:,)/i,/^(?:a)/i,/^(?:\|)/i,/^(?:\/)/i,/^(?:\^)/i,/^(?:\?)/i,/^(?:\+)/i,/^(?:!)/i,/^(?:\[)/i,/^(?:\])/i,/^(?:\|\|)/i,/^(?:&&)/i,/^(?:=)/i,/^(?:!=)/i,/^(?:<)/i,/^(?:>)/i,/^(?:<=)/i,/^(?:>=)/i,/^(?:IN)/i,/^(?:NOT)/i,/^(?:-)/i,/^(?:BOUND)/i,/^(?:BNODE)/i,/^(?:(RAND|NOW|UUID|STUUID))/i,/^(?:(LANG|DATATYPE|IRI|URI|ABS|CEIL|FLOOR|ROUND|STRLEN|STR|UCASE|LCASE|ENCODE_FOR_URI|YEAR|MONTH|DAY|HOURS|MINUTES|SECONDS|TIMEZONE|TZ|MD5|SHA1|SHA256|SHA384|SHA512|isIRI|isURI|isBLANK|isLITERAL|isNUMERIC))/i,/^(?:(LANGMATCHES|CONTAINS|STRSTARTS|STRENDS|STRBEFORE|STRAFTER|STRLANG|STRDT|sameTerm))/i,/^(?:CONCAT)/i,/^(?:COALESCE)/i,/^(?:IF)/i,/^(?:REGEX)/i,/^(?:SUBSTR)/i,/^(?:REPLACE)/i,/^(?:EXISTS)/i,/^(?:COUNT)/i,/^(?:SUM|MIN|MAX|AVG|SAMPLE)/i,/^(?:GROUP_CONCAT)/i,/^(?:SEPARATOR)/i,/^(?:\^\^)/i,/^(?:true)/i,/^(?:false)/i,/^(?:(<([^<>\"\{\}\|\^`\\\u0000-\u0020])*>))/i,/^(?:((([A-Z]|[a-z]|[\u00C0-\u00D6]|[\u00D8-\u00F6]|[\u00F8-\u02FF]|[\u0370-\u037D]|[\u037F-\u1FFF]|[\u200C-\u200D]|[\u2070-\u218F]|[\u2C00-\u2FEF]|[\u3001-\uD7FF]|[\uF900-\uFDCF]|[\uFDF0-\uFFFD]|[\uD800-\uDB7F][\uDC00-\uDFFF])(((((?:([A-Z]|[a-z]|[\u00C0-\u00D6]|[\u00D8-\u00F6]|[\u00F8-\u02FF]|[\u0370-\u037D]|[\u037F-\u1FFF]|[\u200C-\u200D]|[\u2070-\u218F]|[\u2C00-\u2FEF]|[\u3001-\uD7FF]|[\uF900-\uFDCF]|[\uFDF0-\uFFFD]|[\uD800-\uDB7F][\uDC00-\uDFFF])|_))|-|[0-9]|\u00B7|[\u0300-\u036F]|[\u203F-\u2040])|\.)*(((?:([A-Z]|[a-z]|[\u00C0-\u00D6]|[\u00D8-\u00F6]|[\u00F8-\u02FF]|[\u0370-\u037D]|[\u037F-\u1FFF]|[\u200C-\u200D]|[\u2070-\u218F]|[\u2C00-\u2FEF]|[\u3001-\uD7FF]|[\uF900-\uFDCF]|[\uFDF0-\uFFFD]|[\uD800-\uDB7F][\uDC00-\uDFFF])|_))|-|[0-9]|\u00B7|[\u0300-\u036F]|[\u203F-\u2040]))?)?:))/i,/^(?:(((([A-Z]|[a-z]|[\u00C0-\u00D6]|[\u00D8-\u00F6]|[\u00F8-\u02FF]|[\u0370-\u037D]|[\u037F-\u1FFF]|[\u200C-\u200D]|[\u2070-\u218F]|[\u2C00-\u2FEF]|[\u3001-\uD7FF]|[\uF900-\uFDCF]|[\uFDF0-\uFFFD]|[\uD800-\uDB7F][\uDC00-\uDFFF])(((((?:([A-Z]|[a-z]|[\u00C0-\u00D6]|[\u00D8-\u00F6]|[\u00F8-\u02FF]|[\u0370-\u037D]|[\u037F-\u1FFF]|[\u200C-\u200D]|[\u2070-\u218F]|[\u2C00-\u2FEF]|[\u3001-\uD7FF]|[\uF900-\uFDCF]|[\uFDF0-\uFFFD]|[\uD800-\uDB7F][\uDC00-\uDFFF])|_))|-|[0-9]|\u00B7|[\u0300-\u036F]|[\u203F-\u2040])|\.)*(((?:([A-Z]|[a-z]|[\u00C0-\u00D6]|[\u00D8-\u00F6]|[\u00F8-\u02FF]|[\u0370-\u037D]|[\u037F-\u1FFF]|[\u200C-\u200D]|[\u2070-\u218F]|[\u2C00-\u2FEF]|[\u3001-\uD7FF]|[\uF900-\uFDCF]|[\uFDF0-\uFFFD]|[\uD800-\uDB7F][\uDC00-\uDFFF])|_))|-|[0-9]|\u00B7|[\u0300-\u036F]|[\u203F-\u2040]))?)?:)((((?:([A-Z]|[a-z]|[\u00C0-\u00D6]|[\u00D8-\u00F6]|[\u00F8-\u02FF]|[\u0370-\u037D]|[\u037F-\u1FFF]|[\u200C-\u200D]|[\u2070-\u218F]|[\u2C00-\u2FEF]|[\u3001-\uD7FF]|[\uF900-\uFDCF]|[\uFDF0-\uFFFD]|[\uD800-\uDB7F][\uDC00-\uDFFF])|_))|:|[0-9]|((%([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f]))|(\\(_|~|\.|-|!|\$|&|'|\(|\)|\*|\+|,|;|=|\/|\?|#|@|%))))(((((?:([A-Z]|[a-z]|[\u00C0-\u00D6]|[\u00D8-\u00F6]|[\u00F8-\u02FF]|[\u0370-\u037D]|[\u037F-\u1FFF]|[\u200C-\u200D]|[\u2070-\u218F]|[\u2C00-\u2FEF]|[\u3001-\uD7FF]|[\uF900-\uFDCF]|[\uFDF0-\uFFFD]|[\uD800-\uDB7F][\uDC00-\uDFFF])|_))|-|[0-9]|\u00B7|[\u0300-\u036F]|[\u203F-\u2040])|\.|:|((%([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f]))|(\\(_|~|\.|-|!|\$|&|'|\(|\)|\*|\+|,|;|=|\/|\?|#|@|%))))*((((?:([A-Z]|[a-z]|[\u00C0-\u00D6]|[\u00D8-\u00F6]|[\u00F8-\u02FF]|[\u0370-\u037D]|[\u037F-\u1FFF]|[\u200C-\u200D]|[\u2070-\u218F]|[\u2C00-\u2FEF]|[\u3001-\uD7FF]|[\uF900-\uFDCF]|[\uFDF0-\uFFFD]|[\uD800-\uDB7F][\uDC00-\uDFFF])|_))|-|[0-9]|\u00B7|[\u0300-\u036F]|[\u203F-\u2040])|:|((%([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f]))|(\\(_|~|\.|-|!|\$|&|'|\(|\)|\*|\+|,|;|=|\/|\?|#|@|%)))))?)))/i,/^(?:(_:(((?:([A-Z]|[a-z]|[\u00C0-\u00D6]|[\u00D8-\u00F6]|[\u00F8-\u02FF]|[\u0370-\u037D]|[\u037F-\u1FFF]|[\u200C-\u200D]|[\u2070-\u218F]|[\u2C00-\u2FEF]|[\u3001-\uD7FF]|[\uF900-\uFDCF]|[\uFDF0-\uFFFD]|[\uD800-\uDB7F][\uDC00-\uDFFF])|_))|[0-9])(((((?:([A-Z]|[a-z]|[\u00C0-\u00D6]|[\u00D8-\u00F6]|[\u00F8-\u02FF]|[\u0370-\u037D]|[\u037F-\u1FFF]|[\u200C-\u200D]|[\u2070-\u218F]|[\u2C00-\u2FEF]|[\u3001-\uD7FF]|[\uF900-\uFDCF]|[\uFDF0-\uFFFD]|[\uD800-\uDB7F][\uDC00-\uDFFF])|_))|-|[0-9]|\u00B7|[\u0300-\u036F]|[\u203F-\u2040])|\.)*(((?:([A-Z]|[a-z]|[\u00C0-\u00D6]|[\u00D8-\u00F6]|[\u00F8-\u02FF]|[\u0370-\u037D]|[\u037F-\u1FFF]|[\u200C-\u200D]|[\u2070-\u218F]|[\u2C00-\u2FEF]|[\u3001-\uD7FF]|[\uF900-\uFDCF]|[\uFDF0-\uFFFD]|[\uD800-\uDB7F][\uDC00-\uDFFF])|_))|-|[0-9]|\u00B7|[\u0300-\u036F]|[\u203F-\u2040]))?))/i,/^(?:([\?\$]((((?:([A-Z]|[a-z]|[\u00C0-\u00D6]|[\u00D8-\u00F6]|[\u00F8-\u02FF]|[\u0370-\u037D]|[\u037F-\u1FFF]|[\u200C-\u200D]|[\u2070-\u218F]|[\u2C00-\u2FEF]|[\u3001-\uD7FF]|[\uF900-\uFDCF]|[\uFDF0-\uFFFD]|[\uD800-\uDB7F][\uDC00-\uDFFF])|_))|[0-9])(((?:([A-Z]|[a-z]|[\u00C0-\u00D6]|[\u00D8-\u00F6]|[\u00F8-\u02FF]|[\u0370-\u037D]|[\u037F-\u1FFF]|[\u200C-\u200D]|[\u2070-\u218F]|[\u2C00-\u2FEF]|[\u3001-\uD7FF]|[\uF900-\uFDCF]|[\uFDF0-\uFFFD]|[\uD800-\uDB7F][\uDC00-\uDFFF])|_))|[0-9]|\u00B7|[\u0300-\u036F]|[\u203F-\u2040])*)))/i,/^(?:(@[a-zA-Z]+(-[a-zA-Z0-9]+)*))/i,/^(?:([0-9]+))/i,/^(?:([0-9]*\.[0-9]+))/i,/^(?:([0-9]+\.[0-9]*([eE][+-]?[0-9]+)|\.([0-9])+([eE][+-]?[0-9]+)|([0-9])+([eE][+-]?[0-9]+)))/i,/^(?:(\+([0-9]+)))/i,/^(?:(\+([0-9]*\.[0-9]+)))/i,/^(?:(\+([0-9]+\.[0-9]*([eE][+-]?[0-9]+)|\.([0-9])+([eE][+-]?[0-9]+)|([0-9])+([eE][+-]?[0-9]+))))/i,/^(?:(-([0-9]+)))/i,/^(?:(-([0-9]*\.[0-9]+)))/i,/^(?:(-([0-9]+\.[0-9]*([eE][+-]?[0-9]+)|\.([0-9])+([eE][+-]?[0-9]+)|([0-9])+([eE][+-]?[0-9]+))))/i,/^(?:([eE][+-]?[0-9]+))/i,/^(?:('(([^\u0027\u005C\u000A\u000D])|(\\[tbnrf\\\"']|\\u([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f])|\\U([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f])))*'))/i,/^(?:("(([^\u0022\u005C\u000A\u000D])|(\\[tbnrf\\\"']|\\u([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f])|\\U([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f])))*"))/i,/^(?:('''(('|'')?([^'\\]|(\\[tbnrf\\\"']|\\u([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f])|\\U([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f]))))*'''))/i,/^(?:("""(("|"")?([^\"\\]|(\\[tbnrf\\\"']|\\u([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f])|\\U([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f])([0-9]|[A-F]|[a-f]))))*"""))/i,/^(?:(\((\u0020|\u0009|\u000D|\u000A)*\)))/i,/^(?:(\[(\u0020|\u0009|\u000D|\u000A)*\]))/i,/^(?:$)/i,/^(?:.)/i,/^(?:.)/i],
 conditions: {"INITIAL":{"rules":[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80,81,82,83,84,85,86,87,88,89,90,91,92,93,94,95,96,97,98,99,100,101,102,103,104,105,106,107,108,109,110,111,112,113,114,115,116,117,118,119,120],"inclusive":true}}
 });
-var $case_helper={1:11,2:14,3:23,4:277,5:278,6:28,7:30,8:31,9:280,10:33,11:37,12:38,13:40,14:42,15:47,16:50,17:283,18:60,19:61,20:67,21:70,22:73,23:75,24:78,25:80,26:82,27:192,28:95,29:284,30:128,31:285,32:286,33:105,34:287,35:104,36:288,37:289,38:108,39:110,40:111,41:126,42:120,43:121,44:123,45:129,46:107,47:290,48:291,49:155,50:158,51:162,52:89,53:156,54:292,55:161,56:242,57:181,58:294,59:295,60:208,61:297,62:298,63:203,64:210,65:211,66:299,67:300,68:301,69:302,70:303,71:304,72:305,73:306,74:222,75:307,76:237,77:245,78:246,79:239,80:240,81:241,82:308,83:309,84:243,85:311,86:310,87:312,88:248,89:249,90:252,91:254,92:313,93:259,94:262,95:263,96:12,97:15,98:274,99:213,100:27,101:258,102:79,103:260,104:261,105:268,106:269,107:270,108:271,109:272,110:273,111:'EXPONENT',112:264,113:265,114:266,115:267,116:163,117:214,118:6,119:'INVALID'};;
 return lexer;
 })();
 parser.lexer = lexer;
@@ -14034,8 +15229,9 @@ if (typeof module !== 'undefined' && require.main === module) {
 }
 }
 }).call(this,require('_process'))
-},{"_process":7,"fs":2,"path":6}],43:[function(require,module,exports){
+},{"_process":8,"fs":2,"path":7}],51:[function(require,module,exports){
 var Parser = require('./lib/SparqlParser').Parser;
+var Generator = require('./lib/SparqlGenerator');
 
 module.exports = {
   // Creates a SPARQL parser with the given pre-defined prefixes
@@ -14055,9 +15251,10 @@ module.exports = {
     parser._resetBlanks = Parser._resetBlanks;
     return parser;
   },
+  Generator: Generator,
 };
 
-},{"./lib/SparqlParser":42}],44:[function(require,module,exports){
+},{"./lib/SparqlGenerator":49,"./lib/SparqlParser":50}],52:[function(require,module,exports){
 (function (global){
 /*global unescape, module, define, window, global*/
 

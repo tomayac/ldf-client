@@ -13,15 +13,11 @@
   ],
   "main": "polymer-ldf-client.html",
   "license": "Apache 2.0",
-  "homepage": "https://github.com/tomayac/polymer-ldf-client",
   "ignore": [
     "/.*",
     "/tests/"
   ],
   "dependencies": {
-    "polymer": "Polymer/polymer#^0.5.1"
-  },
-  "devDependencies": {
-    "web-component-tester": "Polymer/web-component-tester#^2.0.0-rc1"
+    "polymer": "Polymer/polymer#^1.0.0"
   }
 }
