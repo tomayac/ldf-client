@@ -54,9 +54,11 @@ Element providing solution to no problem in particular.
 
       auto: false,
 
-      ready: function() {
-        ldf.Logger.setLevel('warning');
-        this.executeQuery();
+      attached: function() {
+        this.async(function() {
+         ldf.Logger.setLevel('warning');
+         this.executeQuery();
+        });
       },
 
       executeQuery: function() {
