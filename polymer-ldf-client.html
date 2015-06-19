@@ -24,10 +24,14 @@ Element providing solution to no problem in particular.
 @status alpha
 @homepage http://github.com/tomayac/polymer-ldf-client-
 -->
-<dom-module id="polymer-ldf-client" hidden>
+<dom-module id="polymer-ldf-client">
   <script>
     Polymer({
       is: 'polymer-ldf-client',
+
+      hostAttributes: {
+        hidden: true
+      },
 
       properties: {
         startFragment: {
