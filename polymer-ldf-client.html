@@ -1,11 +1,11 @@
 <!--
-    @license
-    Copyright (c) 2014 The Polymer Project Authors. All rights reserved.
-    This code may only be used under the BSD style license found at http://polymer.github.io/LICENSE.txt
-    The complete set of authors may be found at http://polymer.github.io/AUTHORS.txt
-    The complete set of contributors may be found at http://polymer.github.io/CONTRIBUTORS.txt
-    Code distributed by Google as part of the polymer project is also
-    subject to an additional IP rights grant found at http://polymer.github.io/PATENTS.txt
+@license
+Copyright (c) 2015 The Polymer Project Authors. All rights reserved.
+This code may only be used under the BSD style license found at http://polymer.github.io/LICENSE.txt
+The complete set of authors may be found at http://polymer.github.io/AUTHORS.txt
+The complete set of contributors may be found at http://polymer.github.io/CONTRIBUTORS.txt
+Code distributed by Google as part of the polymer project is also
+subject to an additional IP rights grant found at http://polymer.github.io/PATENTS.txt
 -->
 <link rel="import" href="../polymer/polymer.html">
 <script src="./dependencies/jquery-2.1.0.js"></script>
@@ -20,7 +20,7 @@ Element providing solution to no problem in particular.
     <polymer-ldf-client></polymer-ldf-client>
 
 @element polymer-ldf-client
-@blurb Element providing solution to no problem in particular.
+@demo demo/index.html
 @status alpha
 @homepage http://github.com/tomayac/polymer-ldf-client-
 -->
@@ -38,21 +38,19 @@ Element providing solution to no problem in particular.
           type: String,
           observer: 'queryChanged'
         },
-        responseFormat: {type: String},
-        auto: {type: Boolean}
+        responseFormat: {
+          type: String
+        },
+        auto: {
+          type: Boolean,
+          value: true
+        },
+        _DEBUG: {
+          type: Boolean,
+          value: true
+        },
+        _results: {type: Object}
       },
-
-      _DEBUG: true,
-
-      _results: false,
-
-      query: '',
-
-      startFragment: '',
-
-      responseFormat: 'streaming',
-
-      auto: false,
 
       attached: function() {
         this.async(function() {
@@ -97,19 +95,13 @@ Element providing solution to no problem in particular.
           });
         } else if (this.responseFormat === 'polling') {
           this._results = results;
+          alert(results)
           return this.showNext();
         }
       },
 
-      go: function() {
-        return this.executeQuery();
-      },
-
       showNext: function() {
         var that = this;
-        if (!that._results) {
-          return;
-        }
         (function _showNext() {
           var result = that._results.read();
           if (result === null) {

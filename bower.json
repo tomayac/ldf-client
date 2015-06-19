@@ -15,9 +15,14 @@
   "license": "Apache 2.0",
   "ignore": [
     "/.*",
-    "/tests/"
+    "/test/",
+    "/demo/"
   ],
   "dependencies": {
     "polymer": "Polymer/polymer#^1.0.0"
+  },
+  "devDependencies": {
+    "iron-component-page": "PolymerElements/iron-component-page#^1.0.0",
+    "web-component-tester": "*"
   }
 }
