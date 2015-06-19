@@ -41,7 +41,7 @@ The example below shows basic usage instructions for the element.
     <script src="../webcomponentsjs/webcomponents-lite.min.js"></script>
     <link rel="import" href="polymer-ldf-client.html">
   </head>
-  <body unresolved>
+  <body>
     <!-- Streaming example -->
     <polymer-ldf-client
         id="polymer-ldf-client-streaming"
