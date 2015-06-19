@@ -14,7 +14,8 @@ of the Web Component in action hosted on GitHub pages.
 Installation
 ============
 
-This assumes that you have [bower](http://bower.io/) installed.
+This assumes that you have [bower](http://bower.io/) and
+[polyserve](https://github.com/PolymerLabs/polyserve) installed.
 
 ```sh
 $ mkdir web-components
@@ -22,8 +23,7 @@ $ cd web-components
 $ git clone git@github.com:tomayac/polymer-ldf-client.git
 $ cd polymer-ldf-client
 $ bower install
-$ cd ..
-$ python -m SimpleHTTPServer
+$ polyserve
 ```
 
 Finally visit [http://localhost:8000/polymer-ldf-client/](http://localhost:8000/polymer-ldf-client/)
