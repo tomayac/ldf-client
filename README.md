@@ -26,8 +26,8 @@ $ bower install
 $ polyserve
 ```
 
-Finally visit [http://localhost:8000/polymer-ldf-client/](http://localhost:8000/polymer-ldf-client/)
-and follow the [demo](http://localhost:8000/polymer-ldf-client/demo.html) link.
+Finally visit [http://localhost:8080/components/polymer-ldf-client/](http://localhost:8080/components/polymer-ldf-client/)
+and click the [demo](http://localhost:8080/components/polymer-ldf-client/demo/) link in the upper right corner.
 
 Basic Usage
 ===========
