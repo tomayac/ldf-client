@@ -12,9 +12,9 @@ subject to an additional IP rights grant found at http://polymer.github.io/PATEN
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, minimum-scale=1.0, initial-scale=1.0, user-scalable=yes">
-    <title>polymer-ldf-client Demo</title>
+    <title>ldf-client Demo</title>
     <script src="../../webcomponentsjs/webcomponents-lite.js"></script>
-    <link rel="import" href="../polymer-ldf-client.html">
+    <link rel="import" href="../ldf-client.html">
     <style>
       h1 {
         font-size: 1.2em;
@@ -31,15 +31,15 @@ subject to an additional IP rights grant found at http://polymer.github.io/PATEN
     </style>
   </head>
   <body>
-    <h1>An example of using <code>&lt;polymer-ldf-client&gt;</code></h1>
+    <h1>An example of using <code>&lt;ldf-client&gt;</code></h1>
 
     <p>Polling results are displayed in <pre class="polling">blue</pre>
       <button value="Poll" id="button">Poll</button>
     </p>
     <p>Streaming results are displayed in <pre class="streaming">red</pre></p>
 
-    <polymer-ldf-client
-        id="polymer-ldf-client-polling"
+    <ldf-client
+        id="ldf-client-polling"
         response-format="polling"
         query="SELECT DISTINCT ?tag WHERE {
                  [ a &lt;http://advene.org/ns/cinelab/ld#Annotation&gt; ;
@@ -48,10 +48,10 @@ subject to an additional IP rights grant found at http://polymer.github.io/PATEN
                   ]
                }"
         start-fragment="http://spectacleenlignes.fr/ldf/spectacle_en_lignes">
-    </polymer-ldf-client>
+    </ldf-client>
 
-    <polymer-ldf-client
-        id="polymer-ldf-client-streaming"
+    <ldf-client
+        id="ldf-client-streaming"
         response-format="streaming"
         query="SELECT DISTINCT ?frag WHERE {
                  ?a a &lt;http://advene.org/ns/cinelab/ld#Annotation&gt; ;
@@ -62,14 +62,14 @@ subject to an additional IP rights grant found at http://polymer.github.io/PATEN
                    .
                }"
         start-fragment="http://spectacleenlignes.fr/ldf/spectacle_en_lignes">
-    </polymer-ldf-client>
+    </ldf-client>
 
     <table><tr><td id="td1"></td><td id="td2"></td></tr></table>
 
     <script>
       document.addEventListener('WebComponentsReady', function() {
 
-        var ldfClientPolling = document.querySelector('#polymer-ldf-client-polling');
+        var ldfClientPolling = document.querySelector('#ldf-client-polling');
         // Poll for data
         ldfClientPolling.addEventListener('ldf-query-polling-response', function(e) {
           var pre = document.createElement('pre');
@@ -82,7 +82,7 @@ subject to an additional IP rights grant found at http://polymer.github.io/PATEN
           ldfClientPolling.showNext();
         });
 
-        var ldfClientStreaming = document.querySelector('#polymer-ldf-client-streaming');
+        var ldfClientStreaming = document.querySelector('#ldf-client-streaming');
         // Process data as it appears
         ldfClientStreaming.addEventListener('ldf-query-streaming-response-partial',
             function(e) {

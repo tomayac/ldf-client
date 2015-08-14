@@ -1,8 +1,8 @@
-&lt;polymer-ldf-client&gt;
+&lt;ldf-client&gt;
 ==========================
 
 A declarative [Linked Data Fragments](http://linkeddatafragments.org) client in the form of a [Web Component](http://webcomponents.org/).
-Simply insert the ```<polymer-ldf-client>``` in your page, fill in the required attribute values,
+Simply insert the ```<ldf-client>``` in your page, fill in the required attribute values,
 and you are ready to go.
 
 Live Demo
@@ -39,12 +39,12 @@ The example below shows basic usage instructions for the element.
 <html>
   <head>
     <script src="../webcomponentsjs/webcomponents-lite.min.js"></script>
-    <link rel="import" href="polymer-ldf-client.html">
+    <link rel="import" href="ldf-client.html">
   </head>
   <body>
     <!-- Streaming example -->
-    <polymer-ldf-client
-        id="polymer-ldf-client-streaming"
+    <ldf-client
+        id="ldf-client-streaming"
         responseFormat="streaming"
         query="SELECT DISTINCT ?frag WHERE {
                  ?a a &lt;http://advene.org/ns/cinelab/ld#Annotation&gt; ;
@@ -55,11 +55,11 @@ The example below shows basic usage instructions for the element.
                    .
                }"
         startFragment="http://spectacleenlignes.fr/ldf/spectacle_en_lignes">
-    </polymer-ldf-client>
+    </ldf-client>
 
     <!-- Polling example -->
-    <polymer-ldf-client
-        id="polymer-ldf-client-polling"
+    <ldf-client
+        id="ldf-client-polling"
         responseFormat="polling"
         query="SELECT DISTINCT ?tag WHERE {
                  [ a &lt;http://advene.org/ns/cinelab/ld#Annotation&gt; ;
@@ -68,14 +68,14 @@ The example below shows basic usage instructions for the element.
                   ]
                }"
         startFragment="http://spectacleenlignes.fr/ldf/spectacle_en_lignes">
-    </polymer-ldf-client>
+    </ldf-client>
 
     <button value="Poll" id="button">Poll</button>
 
     <script>
       document.addEventListener('polymer-ready', function() {
         /* Streaming example */
-        var ldfClientStreaming = document.querySelector('#polymer-ldf-client-streaming');
+        var ldfClientStreaming = document.querySelector('#ldf-client-streaming');
         // Process data as it appears
         ldfClientStreaming.addEventListener('ldf-query-streaming-response-partial',
             function(e) {
@@ -89,7 +89,7 @@ The example below shows basic usage instructions for the element.
         });
 
         /* Polling example */
-        var ldfClientPolling = document.querySelector('#polymer-ldf-client-polling');
+        var ldfClientPolling = document.querySelector('#ldf-client-polling');
         // Poll for data
         ldfClientPolling.addEventListener('ldf-query-polling-response', function(e) {
           var pre = document.createElement('pre');

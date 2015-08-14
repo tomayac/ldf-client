@@ -1,6 +1,6 @@
 {
-  "name": "polymer-ldf-client",
-  "version": "0.0.1",
+  "name": "ldf-client",
+  "version": "0.0.2",
   "homepage": "https://github.com/tomayac/polymer-ldf-client",
   "authors": [
     "Thomas Steiner <tomac@google.com>"
@@ -11,7 +11,7 @@
     "ldf",
     "client"
   ],
-  "main": "polymer-ldf-client.html",
+  "main": "ldf-client.html",
   "license": "Apache 2.0",
   "ignore": [
     "/.*",
@@ -19,7 +19,7 @@
     "/demo/"
   ],
   "dependencies": {
-    "polymer": "Polymer/polymer#^1.0.0"
+    "polymer": "Polymer/polymer#^1.1.0"
   },
   "devDependencies": {
     "iron-component-page": "PolymerElements/iron-component-page#^1.0.0",
