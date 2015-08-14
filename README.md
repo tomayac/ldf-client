@@ -8,7 +8,7 @@ and you are ready to go.
 Live Demo
 =========
 
-You can see a [live demo](http://tomayac.github.io/polymer-ldf-client/)
+You can see a [live demo](http://tomayac.github.io/ldf-client/)
 of the Web Component in action hosted on GitHub pages.
 
 Installation
@@ -20,14 +20,14 @@ This assumes that you have [bower](http://bower.io/) and
 ```sh
 $ mkdir web-components
 $ cd web-components
-$ git clone git@github.com:tomayac/polymer-ldf-client.git
-$ cd polymer-ldf-client
+$ git clone git@github.com:tomayac/ldf-client.git
+$ cd ldf-client
 $ bower install
 $ polyserve
 ```
 
-Finally visit [http://localhost:8080/components/polymer-ldf-client/](http://localhost:8080/components/polymer-ldf-client/)
-and click the [demo](http://localhost:8080/components/polymer-ldf-client/demo/) link in the upper right corner.
+Finally visit [http://localhost:8080/components/ldf-client/](http://localhost:8080/components/ldf-client/)
+and click the [demo](http://localhost:8080/components/ldf-client/demo/) link in the upper right corner.
 
 Basic Usage
 ===========

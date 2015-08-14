@@ -1,7 +1,7 @@
 {
   "name": "ldf-client",
   "version": "0.0.2",
-  "homepage": "https://github.com/tomayac/polymer-ldf-client",
+  "homepage": "https://github.com/tomayac/ldf-client",
   "authors": [
     "Thomas Steiner <tomac@google.com>"
   ],
