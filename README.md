@@ -45,7 +45,7 @@ The example below shows basic usage instructions for the element.
     <!-- Streaming example -->
     <ldf-client
         id="ldf-client-streaming"
-        responseFormat="streaming"
+        response-format="streaming"
         query="SELECT DISTINCT ?frag WHERE {
                  ?a a &lt;http://advene.org/ns/cinelab/ld#Annotation&gt; ;
                    &lt;http://advene.org/ns/cinelab/ld#hasFragment&gt; ?frag ;
@@ -54,20 +54,20 @@ The example below shows basic usage instructions for the element.
                      [ &lt;http://purl.org/dc/elements/1.1/title&gt; 'personnages: Grand Papa Pollitt'];
                    .
                }"
-        startFragment="http://spectacleenlignes.fr/ldf/spectacle_en_lignes">
+        start-fragment="http://spectacleenlignes.fr/ldf/spectacle_en_lignes">
     </ldf-client>
 
     <!-- Polling example -->
     <ldf-client
         id="ldf-client-polling"
-        responseFormat="polling"
+        response-format="polling"
         query="SELECT DISTINCT ?tag WHERE {
                  [ a &lt;http://advene.org/ns/cinelab/ld#Annotation&gt; ;
                    &lt;http://advene.org/ns/cinelab/ld#taggedWith&gt;
                      [ &lt;http://purl.org/dc/elements/1.1/title&gt;  ?tag ]
                   ]
                }"
-        startFragment="http://spectacleenlignes.fr/ldf/spectacle_en_lignes">
+        start-fragment="http://spectacleenlignes.fr/ldf/spectacle_en_lignes">
     </ldf-client>
 
     <button value="Poll" id="button">Poll</button>
