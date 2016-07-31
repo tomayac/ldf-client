@@ -1,0 +1,134 @@
+<!--
+@license
+Copyright (c) 2015 The Polymer Project Authors. All rights reserved.
+This code may only be used under the BSD style license found at http://polymer.github.io/LICENSE.txt
+The complete set of authors may be found at http://polymer.github.io/AUTHORS.txt
+The complete set of contributors may be found at http://polymer.github.io/CONTRIBUTORS.txt
+Code distributed by Google as part of the polymer project is also
+subject to an additional IP rights grant found at http://polymer.github.io/PATENTS.txt
+-->
+<link rel="import" href="../polymer/polymer.html">
+<script src="./dependencies/jquery-2.1.0.js"></script>
+<script src="./dependencies/ldf-client-browser.js"></script>
+<script src="./dependencies/prefixes.js"></script>
+
+<!--
+Element providing solution to no problem in particular.
+
+##### Example
+
+    <ldf-client></ldf-client>
+
+@element ldf-client
+@demo demo/index.html
+@status alpha
+@homepage http://github.com/tomayac/ldf-client-
+-->
+<dom-module id="ldf-client">
+  <script>
+    Polymer({
+      is: 'ldf-client',
+
+      hostAttributes: {
+        hidden: true
+      },
+
+      properties: {
+        startFragment: {
+          type: String,
+          observer: 'startFragmentChanged'
+        },
+        query: {
+          type: String,
+          observer: 'queryChanged'
+        },
+        responseFormat: {
+          type: String
+        },
+        auto: {
+          type: Boolean,
+          value: true
+        },
+        _DEBUG: {
+          type: Boolean,
+          value: true
+        },
+        _results: {type: Object}
+      },
+
+      attached: function() {
+        this.async(function() {
+         ldf.Logger.setLevel('warning');
+         this.executeQuery();
+        });
+      },
+
+      executeQuery: function() {
+        var that = this;
+        if (!this.query) {
+          this._DEBUG && console.log('No query given.');
+          return;
+        }
+        if (!this.startFragment) {
+          this._DEBUG && console.log('No start fragment given.');
+          return;
+        }
+
+        this._DEBUG && console.log('Query:\n' + this.query);
+        this._DEBUG && console.log('Start fragment:\n' + this.startFragment);
+        this._DEBUG && console.log('Response format:\n' + this.responseFormat);
+
+        var fragmentsClient = new ldf.FragmentsClient(this.startFragment);
+        var results = new ldf.SparqlIterator(this.query, {
+          fragmentsClient: fragmentsClient,
+        });
+
+        if (this.responseFormat === 'streaming') {
+          // Partial response
+          var data = '';
+          results.on('data', function(chunk) {
+            chunk = JSON.stringify(chunk);
+            data += chunk;
+            that.fire('ldf-query-streaming-response-partial', {
+              response: chunk
+            });
+          });
+          // Complete response
+          results.on('end', function() {
+            that.fire('ldf-query-streaming-response-end', {response: data});
+          });
+        } else if (this.responseFormat === 'polling') {
+          this._results = results;
+          return this.showNext();
+        }
+      },
+
+      showNext: function() {
+        var that = this;
+        (function _showNext() {
+          var result = that._results.read();
+          if (result === null) {
+            that._results.once('readable', _showNext);
+          } else {
+            that.fire('ldf-query-polling-response', {
+              response: result // FICKEN JSON.stringify(result)
+            });
+          }
+        })();
+      },
+
+      queryChanged: function() {
+        if (this.auto) {
+          return this.executeQuery();
+        }
+      },
+
+      startFragmentChanged: function() {
+        if (this.auto) {
+          return this.executeQuery();
+        }
+      }
+
+    });
+  </script>
+</dom-module>

@@ -1,0 +1,102 @@
+<!doctype html>
+<!--
+@license
+Copyright (c) 2015 The Polymer Project Authors. All rights reserved.
+This code may only be used under the BSD style license found at http://polymer.github.io/LICENSE.txt
+The complete set of authors may be found at http://polymer.github.io/AUTHORS.txt
+The complete set of contributors may be found at http://polymer.github.io/CONTRIBUTORS.txt
+Code distributed by Google as part of the polymer project is also
+subject to an additional IP rights grant found at http://polymer.github.io/PATENTS.txt
+-->
+<html>
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, minimum-scale=1.0, initial-scale=1.0, user-scalable=yes">
+    <title>ldf-client Demo</title>
+    <script src="../../webcomponentsjs/webcomponents-lite.js"></script>
+    <link rel="import" href="../ldf-client.html">
+    <style>
+      h1 {
+        font-size: 1.2em;
+      }
+      pre.streaming {
+        color: red;
+      }
+      pre.polling {
+        color: blue;
+      }
+      td {
+        vertical-align: top;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>An example of using <code>&lt;ldf-client&gt;</code></h1>
+
+    <p>Polling results are displayed in <pre class="polling">blue</pre>
+      <button value="Poll" id="button">Poll</button>
+    </p>
+    <p>Streaming results are displayed in <pre class="streaming">red</pre></p>
+
+    <ldf-client
+        id="ldf-client-polling"
+        response-format="polling"
+        query="SELECT DISTINCT ?tag WHERE {
+                 [ a &lt;http://advene.org/ns/cinelab/ld#Annotation&gt; ;
+                   &lt;http://advene.org/ns/cinelab/ld#taggedWith&gt;
+                     [ &lt;http://purl.org/dc/elements/1.1/title&gt;  ?tag ]
+                  ]
+               }"
+        start-fragment="http://spectacleenlignes.fr/ldf/spectacle_en_lignes">
+    </ldf-client>
+
+    <ldf-client
+        id="ldf-client-streaming"
+        response-format="streaming"
+        query="SELECT DISTINCT ?frag WHERE {
+                 ?a a &lt;http://advene.org/ns/cinelab/ld#Annotation&gt; ;
+                   &lt;http://advene.org/ns/cinelab/ld#hasFragment&gt; ?frag ;
+                   &lt;http://advene.org/ns/cinelab/ld#taggedWith&gt;
+                     [ &lt;http://purl.org/dc/elements/1.1/title&gt; 'personnages: Margaret'],
+                     [ &lt;http://purl.org/dc/elements/1.1/title&gt; 'personnages: Grand Papa Pollitt'];
+                   .
+               }"
+        start-fragment="http://spectacleenlignes.fr/ldf/spectacle_en_lignes">
+    </ldf-client>
+
+    <table><tr><td id="td1"></td><td id="td2"></td></tr></table>
+
+    <script>
+      document.addEventListener('WebComponentsReady', function() {
+
+        var ldfClientPolling = document.querySelector('#ldf-client-polling');
+        // Poll for data
+        ldfClientPolling.addEventListener('ldf-query-polling-response', function(e) {
+          var pre = document.createElement('pre');
+          pre.classList.add('polling');
+          pre.textContent = JSON.stringify(e.detail.response);
+          document.querySelector('#td1').appendChild(pre);
+        });
+        var button = document.querySelector('#button');
+        button.addEventListener('click', function() {
+          ldfClientPolling.showNext();
+        });
+
+        var ldfClientStreaming = document.querySelector('#ldf-client-streaming');
+        // Process data as it appears
+        ldfClientStreaming.addEventListener('ldf-query-streaming-response-partial',
+            function(e) {
+          var pre = document.createElement('pre');
+          pre.classList.add('streaming');
+          pre.textContent = JSON.stringify(e.detail.response);
+          document.querySelector('#td2').appendChild(pre);
+        });
+        // Get notified once all data is received
+        ldfClientStreaming.addEventListener('ldf-query-streaming-response-end', function() {
+          alert('Received all data');
+        });
+
+      });
+    </script>
+  </body>
+</html>

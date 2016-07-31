@@ -1,0 +1,38 @@
+{
+  "name": "ldf-client",
+  "homepage": "https://github.com/tomayac/ldf-client",
+  "authors": [
+    "Thomas Steiner <tomac@google.com>"
+  ],
+  "description": "Polymer Linked Data Fragments client",
+  "keywords": [
+    "linked data fragments",
+    "ldf",
+    "client",
+    "web-components"
+  ],
+  "main": "ldf-client.html",
+  "license": "Apache 2.0",
+  "ignore": [
+    "/.*",
+    "/test/",
+    "/demo/"
+  ],
+  "dependencies": {
+    "polymer": "Polymer/polymer#^1.2.3"
+  },
+  "devDependencies": {
+    "iron-component-page": "PolymerElements/iron-component-page#^1.0.0",
+    "web-component-tester": "*"
+  },
+  "_release": "6c215ca2af",
+  "_resolution": {
+    "type": "branch",
+    "branch": "master",
+    "commit": "6c215ca2af762ce612e2971106e924050419846e"
+  },
+  "_source": "git://github.com/tomayac/ldf-client.git",
+  "_target": "master",
+  "_originalSource": "tomayac/ldf-client",
+  "_direct": true
+}
