@@ -111,7 +111,7 @@ Element providing solution to no problem in particular.
             that._results.once('readable', _showNext);
           } else {
             that.fire('ldf-query-polling-response', {
-              response: JSON.stringify(result)
+              response: result // FICKEN JSON.stringify(result)
             });
           }
         })();

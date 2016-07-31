@@ -1,13 +1,4 @@
 (function e(t,n,r){function s(o,u){if(!n[o]){if(!t[o]){var a=typeof require=="function"&&require;if(!u&&a)return a(o,!0);if(i)return i(o,!0);var f=new Error("Cannot find module '"+o+"'");throw f.code="MODULE_NOT_FOUND",f}var l=n[o]={exports:{}};t[o][0].call(l.exports,function(e){var n=t[o][1][e];return s(n?n:e)},l,l.exports,e,t,n,r)}return n[o].exports}var i=typeof require=="function"&&require;for(var o=0;o<r.length;o++)s(r[o]);return s})({1:[function(require,module,exports){
-// Make the ldf-client module available as a global browser object.
-// To be compiled with browserify into deps/ldf-client-browser.js
-
-window.ldf = require('ldf-client');
-window.N3  = require('ldf-client/node_modules/n3'); // expose the same N3 version as used in the client
-
-},{"ldf-client":11,"ldf-client/node_modules/n3":40}],2:[function(require,module,exports){
-
-},{}],3:[function(require,module,exports){
 // http://wiki.commonjs.org/wiki/Unit_Testing/1.0
 //
 // THIS IS NOT TESTED NOR LIKELY TO WORK OUTSIDE V8!
@@ -96,7 +87,7 @@ function replacer(key, value) {
   if (util.isUndefined(value)) {
     return '' + value;
   }
-  if (util.isNumber(value) && (isNaN(value) || !isFinite(value))) {
+  if (util.isNumber(value) && !isFinite(value)) {
     return value.toString();
   }
   if (util.isFunction(value) || util.isRegExp(value)) {
@@ -235,23 +226,22 @@ function objEquiv(a, b) {
     return false;
   // an identical 'prototype' property.
   if (a.prototype !== b.prototype) return false;
-  //~~~I've managed to break Object.keys through screwy arguments passing.
-  //   Converting to array solves the problem.
-  if (isArguments(a)) {
-    if (!isArguments(b)) {
-      return false;
-    }
+  // if one is a primitive, the other must be same
+  if (util.isPrimitive(a) || util.isPrimitive(b)) {
+    return a === b;
+  }
+  var aIsArgs = isArguments(a),
+      bIsArgs = isArguments(b);
+  if ((aIsArgs && !bIsArgs) || (!aIsArgs && bIsArgs))
+    return false;
+  if (aIsArgs) {
     a = pSlice.call(a);
     b = pSlice.call(b);
     return _deepEqual(a, b);
   }
-  try {
-    var ka = objectKeys(a),
-        kb = objectKeys(b),
-        key, i;
-  } catch (e) {//happens when one is a string literal and the other isn't
-    return false;
-  }
+  var ka = objectKeys(a),
+      kb = objectKeys(b),
+      key, i;
   // having the same number of owned properties (keys incorporates
   // hasOwnProperty)
   if (ka.length != kb.length)
@@ -369,9 +359,9 @@ var objectKeys = Object.keys || function (obj) {
   return keys;
 };
 
-},{"util/":10}],4:[function(require,module,exports){
-module.exports=require(2)
-},{"/Users/tsteiner/Documents/Browser.js/node_modules/browserify/lib/_empty.js":2}],5:[function(require,module,exports){
+},{"util/":13}],2:[function(require,module,exports){
+
+},{}],3:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -431,8 +421,12 @@ EventEmitter.prototype.emit = function(type) {
       er = arguments[1];
       if (er instanceof Error) {
         throw er; // Unhandled 'error' event
+      } else {
+        // At least give some kind of context to the user
+        var err = new Error('Uncaught, unspecified "error" event. (' + er + ')');
+        err.context = er;
+        throw err;
       }
-      throw TypeError('Uncaught, unspecified "error" event.');
     }
   }
 
@@ -455,18 +449,11 @@ EventEmitter.prototype.emit = function(type) {
         break;
       // slower
       default:
-        len = arguments.length;
-        args = new Array(len - 1);
-        for (i = 1; i < len; i++)
-          args[i - 1] = arguments[i];
+        args = Array.prototype.slice.call(arguments, 1);
         handler.apply(this, args);
     }
   } else if (isObject(handler)) {
-    len = arguments.length;
-    args = new Array(len - 1);
-    for (i = 1; i < len; i++)
-      args[i - 1] = arguments[i];
-
+    args = Array.prototype.slice.call(arguments, 1);
     listeners = handler.slice();
     len = listeners.length;
     for (i = 0; i < len; i++)
@@ -504,7 +491,6 @@ EventEmitter.prototype.addListener = function(type, listener) {
 
   // Check for listener leak
   if (isObject(this._events[type]) && !this._events[type].warned) {
-    var m;
     if (!isUndefined(this._maxListeners)) {
       m = this._maxListeners;
     } else {
@@ -626,7 +612,7 @@ EventEmitter.prototype.removeAllListeners = function(type) {
 
   if (isFunction(listeners)) {
     this.removeListener(type, listeners);
-  } else {
+  } else if (listeners) {
     // LIFO order
     while (listeners.length)
       this.removeListener(type, listeners[listeners.length - 1]);
@@ -647,15 +633,20 @@ EventEmitter.prototype.listeners = function(type) {
   return ret;
 };
 
+EventEmitter.prototype.listenerCount = function(type) {
+  if (this._events) {
+    var evlistener = this._events[type];
+
+    if (isFunction(evlistener))
+      return 1;
+    else if (evlistener)
+      return evlistener.length;
+  }
+  return 0;
+};
+
 EventEmitter.listenerCount = function(emitter, type) {
-  var ret;
-  if (!emitter._events || !emitter._events[type])
-    ret = 0;
-  else if (isFunction(emitter._events[type]))
-    ret = 1;
-  else
-    ret = emitter._events[type].length;
-  return ret;
+  return emitter.listenerCount(type);
 };
 
 function isFunction(arg) {
@@ -674,7 +665,7 @@ function isUndefined(arg) {
   return arg === void 0;
 }
 
-},{}],6:[function(require,module,exports){
+},{}],4:[function(require,module,exports){
 if (typeof Object.create === 'function') {
   // implementation from standard node.js 'util' module
   module.exports = function inherits(ctor, superCtor) {
@@ -699,8 +690,665 @@ if (typeof Object.create === 'function') {
   }
 }
 
+},{}],5:[function(require,module,exports){
+// shim for using process in browser
+
+var process = module.exports = {};
+
+// cached from whatever global is present so that test runners that stub it
+// don't break things.  But we need to wrap it in a try catch in case it is
+// wrapped in strict mode code which doesn't define any globals.  It's inside a
+// function because try/catches deoptimize in certain engines.
+
+var cachedSetTimeout;
+var cachedClearTimeout;
+
+(function () {
+  try {
+    cachedSetTimeout = setTimeout;
+  } catch (e) {
+    cachedSetTimeout = function () {
+      throw new Error('setTimeout is not defined');
+    }
+  }
+  try {
+    cachedClearTimeout = clearTimeout;
+  } catch (e) {
+    cachedClearTimeout = function () {
+      throw new Error('clearTimeout is not defined');
+    }
+  }
+} ())
+var queue = [];
+var draining = false;
+var currentQueue;
+var queueIndex = -1;
+
+function cleanUpNextTick() {
+    if (!draining || !currentQueue) {
+        return;
+    }
+    draining = false;
+    if (currentQueue.length) {
+        queue = currentQueue.concat(queue);
+    } else {
+        queueIndex = -1;
+    }
+    if (queue.length) {
+        drainQueue();
+    }
+}
+
+function drainQueue() {
+    if (draining) {
+        return;
+    }
+    var timeout = cachedSetTimeout.call(null, cleanUpNextTick);
+    draining = true;
+
+    var len = queue.length;
+    while(len) {
+        currentQueue = queue;
+        queue = [];
+        while (++queueIndex < len) {
+            if (currentQueue) {
+                currentQueue[queueIndex].run();
+            }
+        }
+        queueIndex = -1;
+        len = queue.length;
+    }
+    currentQueue = null;
+    draining = false;
+    cachedClearTimeout.call(null, timeout);
+}
+
+process.nextTick = function (fun) {
+    var args = new Array(arguments.length - 1);
+    if (arguments.length > 1) {
+        for (var i = 1; i < arguments.length; i++) {
+            args[i - 1] = arguments[i];
+        }
+    }
+    queue.push(new Item(fun, args));
+    if (queue.length === 1 && !draining) {
+        cachedSetTimeout.call(null, drainQueue, 0);
+    }
+};
+
+// v8 likes predictible objects
+function Item(fun, array) {
+    this.fun = fun;
+    this.array = array;
+}
+Item.prototype.run = function () {
+    this.fun.apply(null, this.array);
+};
+process.title = 'browser';
+process.browser = true;
+process.env = {};
+process.argv = [];
+process.version = ''; // empty string to avoid regexp issues
+process.versions = {};
+
+function noop() {}
+
+process.on = noop;
+process.addListener = noop;
+process.once = noop;
+process.off = noop;
+process.removeListener = noop;
+process.removeAllListeners = noop;
+process.emit = noop;
+
+process.binding = function (name) {
+    throw new Error('process.binding is not supported');
+};
+
+process.cwd = function () { return '/' };
+process.chdir = function (dir) {
+    throw new Error('process.chdir is not supported');
+};
+process.umask = function() { return 0; };
+
+},{}],6:[function(require,module,exports){
+(function (global){
+/*! https://mths.be/punycode v1.4.1 by @mathias */
+;(function(root) {
+
+	/** Detect free variables */
+	var freeExports = typeof exports == 'object' && exports &&
+		!exports.nodeType && exports;
+	var freeModule = typeof module == 'object' && module &&
+		!module.nodeType && module;
+	var freeGlobal = typeof global == 'object' && global;
+	if (
+		freeGlobal.global === freeGlobal ||
+		freeGlobal.window === freeGlobal ||
+		freeGlobal.self === freeGlobal
+	) {
+		root = freeGlobal;
+	}
+
+	/**
+	 * The `punycode` object.
+	 * @name punycode
+	 * @type Object
+	 */
+	var punycode,
+
+	/** Highest positive signed 32-bit float value */
+	maxInt = 2147483647, // aka. 0x7FFFFFFF or 2^31-1
+
+	/** Bootstring parameters */
+	base = 36,
+	tMin = 1,
+	tMax = 26,
+	skew = 38,
+	damp = 700,
+	initialBias = 72,
+	initialN = 128, // 0x80
+	delimiter = '-', // '\x2D'
+
+	/** Regular expressions */
+	regexPunycode = /^xn--/,
+	regexNonASCII = /[^\x20-\x7E]/, // unprintable ASCII chars + non-ASCII chars
+	regexSeparators = /[\x2E\u3002\uFF0E\uFF61]/g, // RFC 3490 separators
+
+	/** Error messages */
+	errors = {
+		'overflow': 'Overflow: input needs wider integers to process',
+		'not-basic': 'Illegal input >= 0x80 (not a basic code point)',
+		'invalid-input': 'Invalid input'
+	},
+
+	/** Convenience shortcuts */
+	baseMinusTMin = base - tMin,
+	floor = Math.floor,
+	stringFromCharCode = String.fromCharCode,
+
+	/** Temporary variable */
+	key;
+
+	/*--------------------------------------------------------------------------*/
+
+	/**
+	 * A generic error utility function.
+	 * @private
+	 * @param {String} type The error type.
+	 * @returns {Error} Throws a `RangeError` with the applicable error message.
+	 */
+	function error(type) {
+		throw new RangeError(errors[type]);
+	}
+
+	/**
+	 * A generic `Array#map` utility function.
+	 * @private
+	 * @param {Array} array The array to iterate over.
+	 * @param {Function} callback The function that gets called for every array
+	 * item.
+	 * @returns {Array} A new array of values returned by the callback function.
+	 */
+	function map(array, fn) {
+		var length = array.length;
+		var result = [];
+		while (length--) {
+			result[length] = fn(array[length]);
+		}
+		return result;
+	}
+
+	/**
+	 * A simple `Array#map`-like wrapper to work with domain name strings or email
+	 * addresses.
+	 * @private
+	 * @param {String} domain The domain name or email address.
+	 * @param {Function} callback The function that gets called for every
+	 * character.
+	 * @returns {Array} A new string of characters returned by the callback
+	 * function.
+	 */
+	function mapDomain(string, fn) {
+		var parts = string.split('@');
+		var result = '';
+		if (parts.length > 1) {
+			// In email addresses, only the domain name should be punycoded. Leave
+			// the local part (i.e. everything up to `@`) intact.
+			result = parts[0] + '@';
+			string = parts[1];
+		}
+		// Avoid `split(regex)` for IE8 compatibility. See #17.
+		string = string.replace(regexSeparators, '\x2E');
+		var labels = string.split('.');
+		var encoded = map(labels, fn).join('.');
+		return result + encoded;
+	}
+
+	/**
+	 * Creates an array containing the numeric code points of each Unicode
+	 * character in the string. While JavaScript uses UCS-2 internally,
+	 * this function will convert a pair of surrogate halves (each of which
+	 * UCS-2 exposes as separate characters) into a single code point,
+	 * matching UTF-16.
+	 * @see `punycode.ucs2.encode`
+	 * @see <https://mathiasbynens.be/notes/javascript-encoding>
+	 * @memberOf punycode.ucs2
+	 * @name decode
+	 * @param {String} string The Unicode input string (UCS-2).
+	 * @returns {Array} The new array of code points.
+	 */
+	function ucs2decode(string) {
+		var output = [],
+		    counter = 0,
+		    length = string.length,
+		    value,
+		    extra;
+		while (counter < length) {
+			value = string.charCodeAt(counter++);
+			if (value >= 0xD800 && value <= 0xDBFF && counter < length) {
+				// high surrogate, and there is a next character
+				extra = string.charCodeAt(counter++);
+				if ((extra & 0xFC00) == 0xDC00) { // low surrogate
+					output.push(((value & 0x3FF) << 10) + (extra & 0x3FF) + 0x10000);
+				} else {
+					// unmatched surrogate; only append this code unit, in case the next
+					// code unit is the high surrogate of a surrogate pair
+					output.push(value);
+					counter--;
+				}
+			} else {
+				output.push(value);
+			}
+		}
+		return output;
+	}
+
+	/**
+	 * Creates a string based on an array of numeric code points.
+	 * @see `punycode.ucs2.decode`
+	 * @memberOf punycode.ucs2
+	 * @name encode
+	 * @param {Array} codePoints The array of numeric code points.
+	 * @returns {String} The new Unicode string (UCS-2).
+	 */
+	function ucs2encode(array) {
+		return map(array, function(value) {
+			var output = '';
+			if (value > 0xFFFF) {
+				value -= 0x10000;
+				output += stringFromCharCode(value >>> 10 & 0x3FF | 0xD800);
+				value = 0xDC00 | value & 0x3FF;
+			}
+			output += stringFromCharCode(value);
+			return output;
+		}).join('');
+	}
+
+	/**
+	 * Converts a basic code point into a digit/integer.
+	 * @see `digitToBasic()`
+	 * @private
+	 * @param {Number} codePoint The basic numeric code point value.
+	 * @returns {Number} The numeric value of a basic code point (for use in
+	 * representing integers) in the range `0` to `base - 1`, or `base` if
+	 * the code point does not represent a value.
+	 */
+	function basicToDigit(codePoint) {
+		if (codePoint - 48 < 10) {
+			return codePoint - 22;
+		}
+		if (codePoint - 65 < 26) {
+			return codePoint - 65;
+		}
+		if (codePoint - 97 < 26) {
+			return codePoint - 97;
+		}
+		return base;
+	}
+
+	/**
+	 * Converts a digit/integer into a basic code point.
+	 * @see `basicToDigit()`
+	 * @private
+	 * @param {Number} digit The numeric value of a basic code point.
+	 * @returns {Number} The basic code point whose value (when used for
+	 * representing integers) is `digit`, which needs to be in the range
+	 * `0` to `base - 1`. If `flag` is non-zero, the uppercase form is
+	 * used; else, the lowercase form is used. The behavior is undefined
+	 * if `flag` is non-zero and `digit` has no uppercase form.
+	 */
+	function digitToBasic(digit, flag) {
+		//  0..25 map to ASCII a..z or A..Z
+		// 26..35 map to ASCII 0..9
+		return digit + 22 + 75 * (digit < 26) - ((flag != 0) << 5);
+	}
+
+	/**
+	 * Bias adaptation function as per section 3.4 of RFC 3492.
+	 * https://tools.ietf.org/html/rfc3492#section-3.4
+	 * @private
+	 */
+	function adapt(delta, numPoints, firstTime) {
+		var k = 0;
+		delta = firstTime ? floor(delta / damp) : delta >> 1;
+		delta += floor(delta / numPoints);
+		for (/* no initialization */; delta > baseMinusTMin * tMax >> 1; k += base) {
+			delta = floor(delta / baseMinusTMin);
+		}
+		return floor(k + (baseMinusTMin + 1) * delta / (delta + skew));
+	}
+
+	/**
+	 * Converts a Punycode string of ASCII-only symbols to a string of Unicode
+	 * symbols.
+	 * @memberOf punycode
+	 * @param {String} input The Punycode string of ASCII-only symbols.
+	 * @returns {String} The resulting string of Unicode symbols.
+	 */
+	function decode(input) {
+		// Don't use UCS-2
+		var output = [],
+		    inputLength = input.length,
+		    out,
+		    i = 0,
+		    n = initialN,
+		    bias = initialBias,
+		    basic,
+		    j,
+		    index,
+		    oldi,
+		    w,
+		    k,
+		    digit,
+		    t,
+		    /** Cached calculation results */
+		    baseMinusT;
+
+		// Handle the basic code points: let `basic` be the number of input code
+		// points before the last delimiter, or `0` if there is none, then copy
+		// the first basic code points to the output.
+
+		basic = input.lastIndexOf(delimiter);
+		if (basic < 0) {
+			basic = 0;
+		}
+
+		for (j = 0; j < basic; ++j) {
+			// if it's not a basic code point
+			if (input.charCodeAt(j) >= 0x80) {
+				error('not-basic');
+			}
+			output.push(input.charCodeAt(j));
+		}
+
+		// Main decoding loop: start just after the last delimiter if any basic code
+		// points were copied; start at the beginning otherwise.
+
+		for (index = basic > 0 ? basic + 1 : 0; index < inputLength; /* no final expression */) {
+
+			// `index` is the index of the next character to be consumed.
+			// Decode a generalized variable-length integer into `delta`,
+			// which gets added to `i`. The overflow checking is easier
+			// if we increase `i` as we go, then subtract off its starting
+			// value at the end to obtain `delta`.
+			for (oldi = i, w = 1, k = base; /* no condition */; k += base) {
+
+				if (index >= inputLength) {
+					error('invalid-input');
+				}
+
+				digit = basicToDigit(input.charCodeAt(index++));
+
+				if (digit >= base || digit > floor((maxInt - i) / w)) {
+					error('overflow');
+				}
+
+				i += digit * w;
+				t = k <= bias ? tMin : (k >= bias + tMax ? tMax : k - bias);
+
+				if (digit < t) {
+					break;
+				}
+
+				baseMinusT = base - t;
+				if (w > floor(maxInt / baseMinusT)) {
+					error('overflow');
+				}
+
+				w *= baseMinusT;
+
+			}
+
+			out = output.length + 1;
+			bias = adapt(i - oldi, out, oldi == 0);
+
+			// `i` was supposed to wrap around from `out` to `0`,
+			// incrementing `n` each time, so we'll fix that now:
+			if (floor(i / out) > maxInt - n) {
+				error('overflow');
+			}
+
+			n += floor(i / out);
+			i %= out;
+
+			// Insert `n` at position `i` of the output
+			output.splice(i++, 0, n);
+
+		}
+
+		return ucs2encode(output);
+	}
+
+	/**
+	 * Converts a string of Unicode symbols (e.g. a domain name label) to a
+	 * Punycode string of ASCII-only symbols.
+	 * @memberOf punycode
+	 * @param {String} input The string of Unicode symbols.
+	 * @returns {String} The resulting Punycode string of ASCII-only symbols.
+	 */
+	function encode(input) {
+		var n,
+		    delta,
+		    handledCPCount,
+		    basicLength,
+		    bias,
+		    j,
+		    m,
+		    q,
+		    k,
+		    t,
+		    currentValue,
+		    output = [],
+		    /** `inputLength` will hold the number of code points in `input`. */
+		    inputLength,
+		    /** Cached calculation results */
+		    handledCPCountPlusOne,
+		    baseMinusT,
+		    qMinusT;
+
+		// Convert the input in UCS-2 to Unicode
+		input = ucs2decode(input);
+
+		// Cache the length
+		inputLength = input.length;
+
+		// Initialize the state
+		n = initialN;
+		delta = 0;
+		bias = initialBias;
+
+		// Handle the basic code points
+		for (j = 0; j < inputLength; ++j) {
+			currentValue = input[j];
+			if (currentValue < 0x80) {
+				output.push(stringFromCharCode(currentValue));
+			}
+		}
+
+		handledCPCount = basicLength = output.length;
+
+		// `handledCPCount` is the number of code points that have been handled;
+		// `basicLength` is the number of basic code points.
+
+		// Finish the basic string - if it is not empty - with a delimiter
+		if (basicLength) {
+			output.push(delimiter);
+		}
+
+		// Main encoding loop:
+		while (handledCPCount < inputLength) {
+
+			// All non-basic code points < n have been handled already. Find the next
+			// larger one:
+			for (m = maxInt, j = 0; j < inputLength; ++j) {
+				currentValue = input[j];
+				if (currentValue >= n && currentValue < m) {
+					m = currentValue;
+				}
+			}
+
+			// Increase `delta` enough to advance the decoder's <n,i> state to <m,0>,
+			// but guard against overflow
+			handledCPCountPlusOne = handledCPCount + 1;
+			if (m - n > floor((maxInt - delta) / handledCPCountPlusOne)) {
+				error('overflow');
+			}
+
+			delta += (m - n) * handledCPCountPlusOne;
+			n = m;
+
+			for (j = 0; j < inputLength; ++j) {
+				currentValue = input[j];
+
+				if (currentValue < n && ++delta > maxInt) {
+					error('overflow');
+				}
+
+				if (currentValue == n) {
+					// Represent delta as a generalized variable-length integer
+					for (q = delta, k = base; /* no condition */; k += base) {
+						t = k <= bias ? tMin : (k >= bias + tMax ? tMax : k - bias);
+						if (q < t) {
+							break;
+						}
+						qMinusT = q - t;
+						baseMinusT = base - t;
+						output.push(
+							stringFromCharCode(digitToBasic(t + qMinusT % baseMinusT, 0))
+						);
+						q = floor(qMinusT / baseMinusT);
+					}
+
+					output.push(stringFromCharCode(digitToBasic(q, 0)));
+					bias = adapt(delta, handledCPCountPlusOne, handledCPCount == basicLength);
+					delta = 0;
+					++handledCPCount;
+				}
+			}
+
+			++delta;
+			++n;
+
+		}
+		return output.join('');
+	}
+
+	/**
+	 * Converts a Punycode string representing a domain name or an email address
+	 * to Unicode. Only the Punycoded parts of the input will be converted, i.e.
+	 * it doesn't matter if you call it on a string that has already been
+	 * converted to Unicode.
+	 * @memberOf punycode
+	 * @param {String} input The Punycoded domain name or email address to
+	 * convert to Unicode.
+	 * @returns {String} The Unicode representation of the given Punycode
+	 * string.
+	 */
+	function toUnicode(input) {
+		return mapDomain(input, function(string) {
+			return regexPunycode.test(string)
+				? decode(string.slice(4).toLowerCase())
+				: string;
+		});
+	}
+
+	/**
+	 * Converts a Unicode string representing a domain name or an email address to
+	 * Punycode. Only the non-ASCII parts of the domain name will be converted,
+	 * i.e. it doesn't matter if you call it with a domain that's already in
+	 * ASCII.
+	 * @memberOf punycode
+	 * @param {String} input The domain name or email address to convert, as a
+	 * Unicode string.
+	 * @returns {String} The Punycode representation of the given domain name or
+	 * email address.
+	 */
+	function toASCII(input) {
+		return mapDomain(input, function(string) {
+			return regexNonASCII.test(string)
+				? 'xn--' + encode(string)
+				: string;
+		});
+	}
+
+	/*--------------------------------------------------------------------------*/
+
+	/** Define the public API */
+	punycode = {
+		/**
+		 * A string representing the current Punycode.js version number.
+		 * @memberOf punycode
+		 * @type String
+		 */
+		'version': '1.4.1',
+		/**
+		 * An object of methods to convert from JavaScript's internal character
+		 * representation (UCS-2) to Unicode code points, and back.
+		 * @see <https://mathiasbynens.be/notes/javascript-encoding>
+		 * @memberOf punycode
+		 * @type Object
+		 */
+		'ucs2': {
+			'decode': ucs2decode,
+			'encode': ucs2encode
+		},
+		'decode': decode,
+		'encode': encode,
+		'toASCII': toASCII,
+		'toUnicode': toUnicode
+	};
+
+	/** Expose `punycode` */
+	// Some AMD build optimizers, like r.js, check for specific condition patterns
+	// like the following:
+	if (
+		typeof define == 'function' &&
+		typeof define.amd == 'object' &&
+		define.amd
+	) {
+		define('punycode', function() {
+			return punycode;
+		});
+	} else if (freeExports && freeModule) {
+		if (module.exports == freeExports) {
+			// in Node.js, io.js, or RingoJS v0.8.0+
+			freeModule.exports = punycode;
+		} else {
+			// in Narwhal or RingoJS v0.7.0-
+			for (key in punycode) {
+				punycode.hasOwnProperty(key) && (freeExports[key] = punycode[key]);
+			}
+		}
+	} else {
+		// in Rhino or a web browser
+		root.punycode = punycode;
+	}
+
+}(this));
+
+}).call(this,typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
 },{}],7:[function(require,module,exports){
-(function (process){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -722,307 +1370,923 @@ if (typeof Object.create === 'function') {
 // OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-// resolves . and .. elements in a path array with directory names there
-// must be no slashes, empty elements, or device names (c:\) in the array
-// (so also no leading and trailing slashes - it does not distinguish
-// relative and absolute paths)
-function normalizeArray(parts, allowAboveRoot) {
+'use strict';
+
+// If obj.hasOwnProperty has been overridden, then calling
+// obj.hasOwnProperty(prop) will break.
+// See: https://github.com/joyent/node/issues/1707
+function hasOwnProperty(obj, prop) {
+  return Object.prototype.hasOwnProperty.call(obj, prop);
+}
+
+module.exports = function(qs, sep, eq, options) {
+  sep = sep || '&';
+  eq = eq || '=';
+  var obj = {};
+
+  if (typeof qs !== 'string' || qs.length === 0) {
+    return obj;
+  }
+
+  var regexp = /\+/g;
+  qs = qs.split(sep);
+
+  var maxKeys = 1000;
+  if (options && typeof options.maxKeys === 'number') {
+    maxKeys = options.maxKeys;
+  }
+
+  var len = qs.length;
+  // maxKeys <= 0 means that we should not limit keys count
+  if (maxKeys > 0 && len > maxKeys) {
+    len = maxKeys;
+  }
+
+  for (var i = 0; i < len; ++i) {
+    var x = qs[i].replace(regexp, '%20'),
+        idx = x.indexOf(eq),
+        kstr, vstr, k, v;
+
+    if (idx >= 0) {
+      kstr = x.substr(0, idx);
+      vstr = x.substr(idx + 1);
+    } else {
+      kstr = x;
+      vstr = '';
+    }
+
+    k = decodeURIComponent(kstr);
+    v = decodeURIComponent(vstr);
+
+    if (!hasOwnProperty(obj, k)) {
+      obj[k] = v;
+    } else if (isArray(obj[k])) {
+      obj[k].push(v);
+    } else {
+      obj[k] = [obj[k], v];
+    }
+  }
+
+  return obj;
+};
+
+var isArray = Array.isArray || function (xs) {
+  return Object.prototype.toString.call(xs) === '[object Array]';
+};
+
+},{}],8:[function(require,module,exports){
+// Copyright Joyent, Inc. and other Node contributors.
+//
+// Permission is hereby granted, free of charge, to any person obtaining a
+// copy of this software and associated documentation files (the
+// "Software"), to deal in the Software without restriction, including
+// without limitation the rights to use, copy, modify, merge, publish,
+// distribute, sublicense, and/or sell copies of the Software, and to permit
+// persons to whom the Software is furnished to do so, subject to the
+// following conditions:
+//
+// The above copyright notice and this permission notice shall be included
+// in all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
+// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+// USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+'use strict';
+
+var stringifyPrimitive = function(v) {
+  switch (typeof v) {
+    case 'string':
+      return v;
+
+    case 'boolean':
+      return v ? 'true' : 'false';
+
+    case 'number':
+      return isFinite(v) ? v : '';
+
+    default:
+      return '';
+  }
+};
+
+module.exports = function(obj, sep, eq, name) {
+  sep = sep || '&';
+  eq = eq || '=';
+  if (obj === null) {
+    obj = undefined;
+  }
+
+  if (typeof obj === 'object') {
+    return map(objectKeys(obj), function(k) {
+      var ks = encodeURIComponent(stringifyPrimitive(k)) + eq;
+      if (isArray(obj[k])) {
+        return map(obj[k], function(v) {
+          return ks + encodeURIComponent(stringifyPrimitive(v));
+        }).join(sep);
+      } else {
+        return ks + encodeURIComponent(stringifyPrimitive(obj[k]));
+      }
+    }).join(sep);
+
+  }
+
+  if (!name) return '';
+  return encodeURIComponent(stringifyPrimitive(name)) + eq +
+         encodeURIComponent(stringifyPrimitive(obj));
+};
+
+var isArray = Array.isArray || function (xs) {
+  return Object.prototype.toString.call(xs) === '[object Array]';
+};
+
+function map (xs, f) {
+  if (xs.map) return xs.map(f);
+  var res = [];
+  for (var i = 0; i < xs.length; i++) {
+    res.push(f(xs[i], i));
+  }
+  return res;
+}
+
+var objectKeys = Object.keys || function (obj) {
+  var res = [];
+  for (var key in obj) {
+    if (Object.prototype.hasOwnProperty.call(obj, key)) res.push(key);
+  }
+  return res;
+};
+
+},{}],9:[function(require,module,exports){
+'use strict';
+
+exports.decode = exports.parse = require('./decode');
+exports.encode = exports.stringify = require('./encode');
+
+},{"./decode":7,"./encode":8}],10:[function(require,module,exports){
+// Copyright Joyent, Inc. and other Node contributors.
+//
+// Permission is hereby granted, free of charge, to any person obtaining a
+// copy of this software and associated documentation files (the
+// "Software"), to deal in the Software without restriction, including
+// without limitation the rights to use, copy, modify, merge, publish,
+// distribute, sublicense, and/or sell copies of the Software, and to permit
+// persons to whom the Software is furnished to do so, subject to the
+// following conditions:
+//
+// The above copyright notice and this permission notice shall be included
+// in all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
+// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+// USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+'use strict';
+
+var punycode = require('punycode');
+var util = require('./util');
+
+exports.parse = urlParse;
+exports.resolve = urlResolve;
+exports.resolveObject = urlResolveObject;
+exports.format = urlFormat;
+
+exports.Url = Url;
+
+function Url() {
+  this.protocol = null;
+  this.slashes = null;
+  this.auth = null;
+  this.host = null;
+  this.port = null;
+  this.hostname = null;
+  this.hash = null;
+  this.search = null;
+  this.query = null;
+  this.pathname = null;
+  this.path = null;
+  this.href = null;
+}
+
+// Reference: RFC 3986, RFC 1808, RFC 2396
+
+// define these here so at least they only have to be
+// compiled once on the first module load.
+var protocolPattern = /^([a-z0-9.+-]+:)/i,
+    portPattern = /:[0-9]*$/,
+
+    // Special case for a simple path URL
+    simplePathPattern = /^(\/\/?(?!\/)[^\?\s]*)(\?[^\s]*)?$/,
+
+    // RFC 2396: characters reserved for delimiting URLs.
+    // We actually just auto-escape these.
+    delims = ['<', '>', '"', '`', ' ', '\r', '\n', '\t'],
+
+    // RFC 2396: characters not allowed for various reasons.
+    unwise = ['{', '}', '|', '\\', '^', '`'].concat(delims),
+
+    // Allowed by RFCs, but cause of XSS attacks.  Always escape these.
+    autoEscape = ['\''].concat(unwise),
+    // Characters that are never ever allowed in a hostname.
+    // Note that any invalid chars are also handled, but these
+    // are the ones that are *expected* to be seen, so we fast-path
+    // them.
+    nonHostChars = ['%', '/', '?', ';', '#'].concat(autoEscape),
+    hostEndingChars = ['/', '?', '#'],
+    hostnameMaxLen = 255,
+    hostnamePartPattern = /^[+a-z0-9A-Z_-]{0,63}$/,
+    hostnamePartStart = /^([+a-z0-9A-Z_-]{0,63})(.*)$/,
+    // protocols that can allow "unsafe" and "unwise" chars.
+    unsafeProtocol = {
+      'javascript': true,
+      'javascript:': true
+    },
+    // protocols that never have a hostname.
+    hostlessProtocol = {
+      'javascript': true,
+      'javascript:': true
+    },
+    // protocols that always contain a // bit.
+    slashedProtocol = {
+      'http': true,
+      'https': true,
+      'ftp': true,
+      'gopher': true,
+      'file': true,
+      'http:': true,
+      'https:': true,
+      'ftp:': true,
+      'gopher:': true,
+      'file:': true
+    },
+    querystring = require('querystring');
+
+function urlParse(url, parseQueryString, slashesDenoteHost) {
+  if (url && util.isObject(url) && url instanceof Url) return url;
+
+  var u = new Url;
+  u.parse(url, parseQueryString, slashesDenoteHost);
+  return u;
+}
+
+Url.prototype.parse = function(url, parseQueryString, slashesDenoteHost) {
+  if (!util.isString(url)) {
+    throw new TypeError("Parameter 'url' must be a string, not " + typeof url);
+  }
+
+  // Copy chrome, IE, opera backslash-handling behavior.
+  // Back slashes before the query string get converted to forward slashes
+  // See: https://code.google.com/p/chromium/issues/detail?id=25916
+  var queryIndex = url.indexOf('?'),
+      splitter =
+          (queryIndex !== -1 && queryIndex < url.indexOf('#')) ? '?' : '#',
+      uSplit = url.split(splitter),
+      slashRegex = /\\/g;
+  uSplit[0] = uSplit[0].replace(slashRegex, '/');
+  url = uSplit.join(splitter);
+
+  var rest = url;
+
+  // trim before proceeding.
+  // This is to support parse stuff like "  http://foo.com  \n"
+  rest = rest.trim();
+
+  if (!slashesDenoteHost && url.split('#').length === 1) {
+    // Try fast path regexp
+    var simplePath = simplePathPattern.exec(rest);
+    if (simplePath) {
+      this.path = rest;
+      this.href = rest;
+      this.pathname = simplePath[1];
+      if (simplePath[2]) {
+        this.search = simplePath[2];
+        if (parseQueryString) {
+          this.query = querystring.parse(this.search.substr(1));
+        } else {
+          this.query = this.search.substr(1);
+        }
+      } else if (parseQueryString) {
+        this.search = '';
+        this.query = {};
+      }
+      return this;
+    }
+  }
+
+  var proto = protocolPattern.exec(rest);
+  if (proto) {
+    proto = proto[0];
+    var lowerProto = proto.toLowerCase();
+    this.protocol = lowerProto;
+    rest = rest.substr(proto.length);
+  }
+
+  // figure out if it's got a host
+  // user@server is *always* interpreted as a hostname, and url
+  // resolution will treat //foo/bar as host=foo,path=bar because that's
+  // how the browser resolves relative URLs.
+  if (slashesDenoteHost || proto || rest.match(/^\/\/[^@\/]+@[^@\/]+/)) {
+    var slashes = rest.substr(0, 2) === '//';
+    if (slashes && !(proto && hostlessProtocol[proto])) {
+      rest = rest.substr(2);
+      this.slashes = true;
+    }
+  }
+
+  if (!hostlessProtocol[proto] &&
+      (slashes || (proto && !slashedProtocol[proto]))) {
+
+    // there's a hostname.
+    // the first instance of /, ?, ;, or # ends the host.
+    //
+    // If there is an @ in the hostname, then non-host chars *are* allowed
+    // to the left of the last @ sign, unless some host-ending character
+    // comes *before* the @-sign.
+    // URLs are obnoxious.
+    //
+    // ex:
+    // http://a@b@c/ => user:a@b host:c
+    // http://a@b?@c => user:a host:c path:/?@c
+
+    // v0.12 TODO(isaacs): This is not quite how Chrome does things.
+    // Review our test case against browsers more comprehensively.
+
+    // find the first instance of any hostEndingChars
+    var hostEnd = -1;
+    for (var i = 0; i < hostEndingChars.length; i++) {
+      var hec = rest.indexOf(hostEndingChars[i]);
+      if (hec !== -1 && (hostEnd === -1 || hec < hostEnd))
+        hostEnd = hec;
+    }
+
+    // at this point, either we have an explicit point where the
+    // auth portion cannot go past, or the last @ char is the decider.
+    var auth, atSign;
+    if (hostEnd === -1) {
+      // atSign can be anywhere.
+      atSign = rest.lastIndexOf('@');
+    } else {
+      // atSign must be in auth portion.
+      // http://a@b/c@d => host:b auth:a path:/c@d
+      atSign = rest.lastIndexOf('@', hostEnd);
+    }
+
+    // Now we have a portion which is definitely the auth.
+    // Pull that off.
+    if (atSign !== -1) {
+      auth = rest.slice(0, atSign);
+      rest = rest.slice(atSign + 1);
+      this.auth = decodeURIComponent(auth);
+    }
+
+    // the host is the remaining to the left of the first non-host char
+    hostEnd = -1;
+    for (var i = 0; i < nonHostChars.length; i++) {
+      var hec = rest.indexOf(nonHostChars[i]);
+      if (hec !== -1 && (hostEnd === -1 || hec < hostEnd))
+        hostEnd = hec;
+    }
+    // if we still have not hit it, then the entire thing is a host.
+    if (hostEnd === -1)
+      hostEnd = rest.length;
+
+    this.host = rest.slice(0, hostEnd);
+    rest = rest.slice(hostEnd);
+
+    // pull out port.
+    this.parseHost();
+
+    // we've indicated that there is a hostname,
+    // so even if it's empty, it has to be present.
+    this.hostname = this.hostname || '';
+
+    // if hostname begins with [ and ends with ]
+    // assume that it's an IPv6 address.
+    var ipv6Hostname = this.hostname[0] === '[' &&
+        this.hostname[this.hostname.length - 1] === ']';
+
+    // validate a little.
+    if (!ipv6Hostname) {
+      var hostparts = this.hostname.split(/\./);
+      for (var i = 0, l = hostparts.length; i < l; i++) {
+        var part = hostparts[i];
+        if (!part) continue;
+        if (!part.match(hostnamePartPattern)) {
+          var newpart = '';
+          for (var j = 0, k = part.length; j < k; j++) {
+            if (part.charCodeAt(j) > 127) {
+              // we replace non-ASCII char with a temporary placeholder
+              // we need this to make sure size of hostname is not
+              // broken by replacing non-ASCII by nothing
+              newpart += 'x';
+            } else {
+              newpart += part[j];
+            }
+          }
+          // we test again with ASCII char only
+          if (!newpart.match(hostnamePartPattern)) {
+            var validParts = hostparts.slice(0, i);
+            var notHost = hostparts.slice(i + 1);
+            var bit = part.match(hostnamePartStart);
+            if (bit) {
+              validParts.push(bit[1]);
+              notHost.unshift(bit[2]);
+            }
+            if (notHost.length) {
+              rest = '/' + notHost.join('.') + rest;
+            }
+            this.hostname = validParts.join('.');
+            break;
+          }
+        }
+      }
+    }
+
+    if (this.hostname.length > hostnameMaxLen) {
+      this.hostname = '';
+    } else {
+      // hostnames are always lower case.
+      this.hostname = this.hostname.toLowerCase();
+    }
+
+    if (!ipv6Hostname) {
+      // IDNA Support: Returns a punycoded representation of "domain".
+      // It only converts parts of the domain name that
+      // have non-ASCII characters, i.e. it doesn't matter if
+      // you call it with a domain that already is ASCII-only.
+      this.hostname = punycode.toASCII(this.hostname);
+    }
+
+    var p = this.port ? ':' + this.port : '';
+    var h = this.hostname || '';
+    this.host = h + p;
+    this.href += this.host;
+
+    // strip [ and ] from the hostname
+    // the host field still retains them, though
+    if (ipv6Hostname) {
+      this.hostname = this.hostname.substr(1, this.hostname.length - 2);
+      if (rest[0] !== '/') {
+        rest = '/' + rest;
+      }
+    }
+  }
+
+  // now rest is set to the post-host stuff.
+  // chop off any delim chars.
+  if (!unsafeProtocol[lowerProto]) {
+
+    // First, make 100% sure that any "autoEscape" chars get
+    // escaped, even if encodeURIComponent doesn't think they
+    // need to be.
+    for (var i = 0, l = autoEscape.length; i < l; i++) {
+      var ae = autoEscape[i];
+      if (rest.indexOf(ae) === -1)
+        continue;
+      var esc = encodeURIComponent(ae);
+      if (esc === ae) {
+        esc = escape(ae);
+      }
+      rest = rest.split(ae).join(esc);
+    }
+  }
+
+
+  // chop off from the tail first.
+  var hash = rest.indexOf('#');
+  if (hash !== -1) {
+    // got a fragment string.
+    this.hash = rest.substr(hash);
+    rest = rest.slice(0, hash);
+  }
+  var qm = rest.indexOf('?');
+  if (qm !== -1) {
+    this.search = rest.substr(qm);
+    this.query = rest.substr(qm + 1);
+    if (parseQueryString) {
+      this.query = querystring.parse(this.query);
+    }
+    rest = rest.slice(0, qm);
+  } else if (parseQueryString) {
+    // no query string, but parseQueryString still requested
+    this.search = '';
+    this.query = {};
+  }
+  if (rest) this.pathname = rest;
+  if (slashedProtocol[lowerProto] &&
+      this.hostname && !this.pathname) {
+    this.pathname = '/';
+  }
+
+  //to support http.request
+  if (this.pathname || this.search) {
+    var p = this.pathname || '';
+    var s = this.search || '';
+    this.path = p + s;
+  }
+
+  // finally, reconstruct the href based on what has been validated.
+  this.href = this.format();
+  return this;
+};
+
+// format a parsed object into a url string
+function urlFormat(obj) {
+  // ensure it's an object, and not a string url.
+  // If it's an obj, this is a no-op.
+  // this way, you can call url_format() on strings
+  // to clean up potentially wonky urls.
+  if (util.isString(obj)) obj = urlParse(obj);
+  if (!(obj instanceof Url)) return Url.prototype.format.call(obj);
+  return obj.format();
+}
+
+Url.prototype.format = function() {
+  var auth = this.auth || '';
+  if (auth) {
+    auth = encodeURIComponent(auth);
+    auth = auth.replace(/%3A/i, ':');
+    auth += '@';
+  }
+
+  var protocol = this.protocol || '',
+      pathname = this.pathname || '',
+      hash = this.hash || '',
+      host = false,
+      query = '';
+
+  if (this.host) {
+    host = auth + this.host;
+  } else if (this.hostname) {
+    host = auth + (this.hostname.indexOf(':') === -1 ?
+        this.hostname :
+        '[' + this.hostname + ']');
+    if (this.port) {
+      host += ':' + this.port;
+    }
+  }
+
+  if (this.query &&
+      util.isObject(this.query) &&
+      Object.keys(this.query).length) {
+    query = querystring.stringify(this.query);
+  }
+
+  var search = this.search || (query && ('?' + query)) || '';
+
+  if (protocol && protocol.substr(-1) !== ':') protocol += ':';
+
+  // only the slashedProtocols get the //.  Not mailto:, xmpp:, etc.
+  // unless they had them to begin with.
+  if (this.slashes ||
+      (!protocol || slashedProtocol[protocol]) && host !== false) {
+    host = '//' + (host || '');
+    if (pathname && pathname.charAt(0) !== '/') pathname = '/' + pathname;
+  } else if (!host) {
+    host = '';
+  }
+
+  if (hash && hash.charAt(0) !== '#') hash = '#' + hash;
+  if (search && search.charAt(0) !== '?') search = '?' + search;
+
+  pathname = pathname.replace(/[?#]/g, function(match) {
+    return encodeURIComponent(match);
+  });
+  search = search.replace('#', '%23');
+
+  return protocol + host + pathname + search + hash;
+};
+
+function urlResolve(source, relative) {
+  return urlParse(source, false, true).resolve(relative);
+}
+
+Url.prototype.resolve = function(relative) {
+  return this.resolveObject(urlParse(relative, false, true)).format();
+};
+
+function urlResolveObject(source, relative) {
+  if (!source) return relative;
+  return urlParse(source, false, true).resolveObject(relative);
+}
+
+Url.prototype.resolveObject = function(relative) {
+  if (util.isString(relative)) {
+    var rel = new Url();
+    rel.parse(relative, false, true);
+    relative = rel;
+  }
+
+  var result = new Url();
+  var tkeys = Object.keys(this);
+  for (var tk = 0; tk < tkeys.length; tk++) {
+    var tkey = tkeys[tk];
+    result[tkey] = this[tkey];
+  }
+
+  // hash is always overridden, no matter what.
+  // even href="" will remove it.
+  result.hash = relative.hash;
+
+  // if the relative url is empty, then there's nothing left to do here.
+  if (relative.href === '') {
+    result.href = result.format();
+    return result;
+  }
+
+  // hrefs like //foo/bar always cut to the protocol.
+  if (relative.slashes && !relative.protocol) {
+    // take everything except the protocol from relative
+    var rkeys = Object.keys(relative);
+    for (var rk = 0; rk < rkeys.length; rk++) {
+      var rkey = rkeys[rk];
+      if (rkey !== 'protocol')
+        result[rkey] = relative[rkey];
+    }
+
+    //urlParse appends trailing / to urls like http://www.example.com
+    if (slashedProtocol[result.protocol] &&
+        result.hostname && !result.pathname) {
+      result.path = result.pathname = '/';
+    }
+
+    result.href = result.format();
+    return result;
+  }
+
+  if (relative.protocol && relative.protocol !== result.protocol) {
+    // if it's a known url protocol, then changing
+    // the protocol does weird things
+    // first, if it's not file:, then we MUST have a host,
+    // and if there was a path
+    // to begin with, then we MUST have a path.
+    // if it is file:, then the host is dropped,
+    // because that's known to be hostless.
+    // anything else is assumed to be absolute.
+    if (!slashedProtocol[relative.protocol]) {
+      var keys = Object.keys(relative);
+      for (var v = 0; v < keys.length; v++) {
+        var k = keys[v];
+        result[k] = relative[k];
+      }
+      result.href = result.format();
+      return result;
+    }
+
+    result.protocol = relative.protocol;
+    if (!relative.host && !hostlessProtocol[relative.protocol]) {
+      var relPath = (relative.pathname || '').split('/');
+      while (relPath.length && !(relative.host = relPath.shift()));
+      if (!relative.host) relative.host = '';
+      if (!relative.hostname) relative.hostname = '';
+      if (relPath[0] !== '') relPath.unshift('');
+      if (relPath.length < 2) relPath.unshift('');
+      result.pathname = relPath.join('/');
+    } else {
+      result.pathname = relative.pathname;
+    }
+    result.search = relative.search;
+    result.query = relative.query;
+    result.host = relative.host || '';
+    result.auth = relative.auth;
+    result.hostname = relative.hostname || relative.host;
+    result.port = relative.port;
+    // to support http.request
+    if (result.pathname || result.search) {
+      var p = result.pathname || '';
+      var s = result.search || '';
+      result.path = p + s;
+    }
+    result.slashes = result.slashes || relative.slashes;
+    result.href = result.format();
+    return result;
+  }
+
+  var isSourceAbs = (result.pathname && result.pathname.charAt(0) === '/'),
+      isRelAbs = (
+          relative.host ||
+          relative.pathname && relative.pathname.charAt(0) === '/'
+      ),
+      mustEndAbs = (isRelAbs || isSourceAbs ||
+                    (result.host && relative.pathname)),
+      removeAllDots = mustEndAbs,
+      srcPath = result.pathname && result.pathname.split('/') || [],
+      relPath = relative.pathname && relative.pathname.split('/') || [],
+      psychotic = result.protocol && !slashedProtocol[result.protocol];
+
+  // if the url is a non-slashed url, then relative
+  // links like ../.. should be able
+  // to crawl up to the hostname, as well.  This is strange.
+  // result.protocol has already been set by now.
+  // Later on, put the first path part into the host field.
+  if (psychotic) {
+    result.hostname = '';
+    result.port = null;
+    if (result.host) {
+      if (srcPath[0] === '') srcPath[0] = result.host;
+      else srcPath.unshift(result.host);
+    }
+    result.host = '';
+    if (relative.protocol) {
+      relative.hostname = null;
+      relative.port = null;
+      if (relative.host) {
+        if (relPath[0] === '') relPath[0] = relative.host;
+        else relPath.unshift(relative.host);
+      }
+      relative.host = null;
+    }
+    mustEndAbs = mustEndAbs && (relPath[0] === '' || srcPath[0] === '');
+  }
+
+  if (isRelAbs) {
+    // it's absolute.
+    result.host = (relative.host || relative.host === '') ?
+                  relative.host : result.host;
+    result.hostname = (relative.hostname || relative.hostname === '') ?
+                      relative.hostname : result.hostname;
+    result.search = relative.search;
+    result.query = relative.query;
+    srcPath = relPath;
+    // fall through to the dot-handling below.
+  } else if (relPath.length) {
+    // it's relative
+    // throw away the existing file, and take the new path instead.
+    if (!srcPath) srcPath = [];
+    srcPath.pop();
+    srcPath = srcPath.concat(relPath);
+    result.search = relative.search;
+    result.query = relative.query;
+  } else if (!util.isNullOrUndefined(relative.search)) {
+    // just pull out the search.
+    // like href='?foo'.
+    // Put this after the other two cases because it simplifies the booleans
+    if (psychotic) {
+      result.hostname = result.host = srcPath.shift();
+      //occationaly the auth can get stuck only in host
+      //this especially happens in cases like
+      //url.resolveObject('mailto:local1@domain1', 'local2@domain2')
+      var authInHost = result.host && result.host.indexOf('@') > 0 ?
+                       result.host.split('@') : false;
+      if (authInHost) {
+        result.auth = authInHost.shift();
+        result.host = result.hostname = authInHost.shift();
+      }
+    }
+    result.search = relative.search;
+    result.query = relative.query;
+    //to support http.request
+    if (!util.isNull(result.pathname) || !util.isNull(result.search)) {
+      result.path = (result.pathname ? result.pathname : '') +
+                    (result.search ? result.search : '');
+    }
+    result.href = result.format();
+    return result;
+  }
+
+  if (!srcPath.length) {
+    // no path at all.  easy.
+    // we've already handled the other stuff above.
+    result.pathname = null;
+    //to support http.request
+    if (result.search) {
+      result.path = '/' + result.search;
+    } else {
+      result.path = null;
+    }
+    result.href = result.format();
+    return result;
+  }
+
+  // if a url ENDs in . or .., then it must get a trailing slash.
+  // however, if it ends in anything else non-slashy,
+  // then it must NOT get a trailing slash.
+  var last = srcPath.slice(-1)[0];
+  var hasTrailingSlash = (
+      (result.host || relative.host || srcPath.length > 1) &&
+      (last === '.' || last === '..') || last === '');
+
+  // strip single dots, resolve double dots to parent dir
   // if the path tries to go above the root, `up` ends up > 0
   var up = 0;
-  for (var i = parts.length - 1; i >= 0; i--) {
-    var last = parts[i];
+  for (var i = srcPath.length; i >= 0; i--) {
+    last = srcPath[i];
     if (last === '.') {
-      parts.splice(i, 1);
+      srcPath.splice(i, 1);
     } else if (last === '..') {
-      parts.splice(i, 1);
+      srcPath.splice(i, 1);
       up++;
     } else if (up) {
-      parts.splice(i, 1);
+      srcPath.splice(i, 1);
       up--;
     }
   }
 
   // if the path is allowed to go above the root, restore leading ..s
-  if (allowAboveRoot) {
+  if (!mustEndAbs && !removeAllDots) {
     for (; up--; up) {
-      parts.unshift('..');
+      srcPath.unshift('..');
     }
   }
 
-  return parts;
-}
-
-// Split a filename into [root, dir, basename, ext], unix version
-// 'root' is just a slash, or nothing.
-var splitPathRe =
-    /^(\/?|)([\s\S]*?)((?:\.{1,2}|[^\/]+?|)(\.[^.\/]*|))(?:[\/]*)$/;
-var splitPath = function(filename) {
-  return splitPathRe.exec(filename).slice(1);
-};
-
-// path.resolve([from ...], to)
-// posix version
-exports.resolve = function() {
-  var resolvedPath = '',
-      resolvedAbsolute = false;
-
-  for (var i = arguments.length - 1; i >= -1 && !resolvedAbsolute; i--) {
-    var path = (i >= 0) ? arguments[i] : process.cwd();
-
-    // Skip empty and invalid entries
-    if (typeof path !== 'string') {
-      throw new TypeError('Arguments to path.resolve must be strings');
-    } else if (!path) {
-      continue;
-    }
-
-    resolvedPath = path + '/' + resolvedPath;
-    resolvedAbsolute = path.charAt(0) === '/';
+  if (mustEndAbs && srcPath[0] !== '' &&
+      (!srcPath[0] || srcPath[0].charAt(0) !== '/')) {
+    srcPath.unshift('');
   }
 
-  // At this point the path should be resolved to a full absolute path, but
-  // handle relative paths to be safe (might happen when process.cwd() fails)
-
-  // Normalize the path
-  resolvedPath = normalizeArray(filter(resolvedPath.split('/'), function(p) {
-    return !!p;
-  }), !resolvedAbsolute).join('/');
-
-  return ((resolvedAbsolute ? '/' : '') + resolvedPath) || '.';
-};
-
-// path.normalize(path)
-// posix version
-exports.normalize = function(path) {
-  var isAbsolute = exports.isAbsolute(path),
-      trailingSlash = substr(path, -1) === '/';
-
-  // Normalize the path
-  path = normalizeArray(filter(path.split('/'), function(p) {
-    return !!p;
-  }), !isAbsolute).join('/');
-
-  if (!path && !isAbsolute) {
-    path = '.';
-  }
-  if (path && trailingSlash) {
-    path += '/';
+  if (hasTrailingSlash && (srcPath.join('/').substr(-1) !== '/')) {
+    srcPath.push('');
   }
 
-  return (isAbsolute ? '/' : '') + path;
-};
+  var isAbsolute = srcPath[0] === '' ||
+      (srcPath[0] && srcPath[0].charAt(0) === '/');
 
-// posix version
-exports.isAbsolute = function(path) {
-  return path.charAt(0) === '/';
-};
-
-// posix version
-exports.join = function() {
-  var paths = Array.prototype.slice.call(arguments, 0);
-  return exports.normalize(filter(paths, function(p, index) {
-    if (typeof p !== 'string') {
-      throw new TypeError('Arguments to path.join must be strings');
-    }
-    return p;
-  }).join('/'));
-};
-
-
-// path.relative(from, to)
-// posix version
-exports.relative = function(from, to) {
-  from = exports.resolve(from).substr(1);
-  to = exports.resolve(to).substr(1);
-
-  function trim(arr) {
-    var start = 0;
-    for (; start < arr.length; start++) {
-      if (arr[start] !== '') break;
-    }
-
-    var end = arr.length - 1;
-    for (; end >= 0; end--) {
-      if (arr[end] !== '') break;
-    }
-
-    if (start > end) return [];
-    return arr.slice(start, end - start + 1);
-  }
-
-  var fromParts = trim(from.split('/'));
-  var toParts = trim(to.split('/'));
-
-  var length = Math.min(fromParts.length, toParts.length);
-  var samePartsLength = length;
-  for (var i = 0; i < length; i++) {
-    if (fromParts[i] !== toParts[i]) {
-      samePartsLength = i;
-      break;
+  // put the host back
+  if (psychotic) {
+    result.hostname = result.host = isAbsolute ? '' :
+                                    srcPath.length ? srcPath.shift() : '';
+    //occationaly the auth can get stuck only in host
+    //this especially happens in cases like
+    //url.resolveObject('mailto:local1@domain1', 'local2@domain2')
+    var authInHost = result.host && result.host.indexOf('@') > 0 ?
+                     result.host.split('@') : false;
+    if (authInHost) {
+      result.auth = authInHost.shift();
+      result.host = result.hostname = authInHost.shift();
     }
   }
 
-  var outputParts = [];
-  for (var i = samePartsLength; i < fromParts.length; i++) {
-    outputParts.push('..');
+  mustEndAbs = mustEndAbs || (result.host && srcPath.length);
+
+  if (mustEndAbs && !isAbsolute) {
+    srcPath.unshift('');
   }
 
-  outputParts = outputParts.concat(toParts.slice(samePartsLength));
-
-  return outputParts.join('/');
-};
-
-exports.sep = '/';
-exports.delimiter = ':';
-
-exports.dirname = function(path) {
-  var result = splitPath(path),
-      root = result[0],
-      dir = result[1];
-
-  if (!root && !dir) {
-    // No dirname whatsoever
-    return '.';
+  if (!srcPath.length) {
+    result.pathname = null;
+    result.path = null;
+  } else {
+    result.pathname = srcPath.join('/');
   }
 
-  if (dir) {
-    // It has a dirname, strip trailing slash
-    dir = dir.substr(0, dir.length - 1);
+  //to support request.http
+  if (!util.isNull(result.pathname) || !util.isNull(result.search)) {
+    result.path = (result.pathname ? result.pathname : '') +
+                  (result.search ? result.search : '');
   }
-
-  return root + dir;
+  result.auth = relative.auth || result.auth;
+  result.slashes = result.slashes || relative.slashes;
+  result.href = result.format();
+  return result;
 };
 
-
-exports.basename = function(path, ext) {
-  var f = splitPath(path)[2];
-  // TODO: make this comparison case-insensitive on windows?
-  if (ext && f.substr(-1 * ext.length) === ext) {
-    f = f.substr(0, f.length - ext.length);
+Url.prototype.parseHost = function() {
+  var host = this.host;
+  var port = portPattern.exec(host);
+  if (port) {
+    port = port[0];
+    if (port !== ':') {
+      this.port = port.substr(1);
+    }
+    host = host.substr(0, host.length - port.length);
   }
-  return f;
+  if (host) this.hostname = host;
 };
 
+},{"./util":11,"punycode":6,"querystring":9}],11:[function(require,module,exports){
+'use strict';
 
-exports.extname = function(path) {
-  return splitPath(path)[3];
+module.exports = {
+  isString: function(arg) {
+    return typeof(arg) === 'string';
+  },
+  isObject: function(arg) {
+    return typeof(arg) === 'object' && arg !== null;
+  },
+  isNull: function(arg) {
+    return arg === null;
+  },
+  isNullOrUndefined: function(arg) {
+    return arg == null;
+  }
 };
 
-function filter (xs, f) {
-    if (xs.filter) return xs.filter(f);
-    var res = [];
-    for (var i = 0; i < xs.length; i++) {
-        if (f(xs[i], i, xs)) res.push(xs[i]);
-    }
-    return res;
-}
-
-// String.prototype.substr - negative index don't work in IE8
-var substr = 'ab'.substr(-1) === 'b'
-    ? function (str, start, len) { return str.substr(start, len) }
-    : function (str, start, len) {
-        if (start < 0) start = str.length + start;
-        return str.substr(start, len);
-    }
-;
-
-}).call(this,require('_process'))
-},{"_process":8}],8:[function(require,module,exports){
-// shim for using process in browser
-
-var process = module.exports = {};
-
-process.nextTick = (function () {
-    var canSetImmediate = typeof window !== 'undefined'
-    && window.setImmediate;
-    var canMutationObserver = typeof window !== 'undefined'
-    && window.MutationObserver;
-    var canPost = typeof window !== 'undefined'
-    && window.postMessage && window.addEventListener
-    ;
-
-    if (canSetImmediate) {
-        return function (f) { return window.setImmediate(f) };
-    }
-
-    var queue = [];
-
-    if (canMutationObserver) {
-        var hiddenDiv = document.createElement("div");
-        var observer = new MutationObserver(function () {
-            var queueList = queue.slice();
-            queue.length = 0;
-            queueList.forEach(function (fn) {
-                fn();
-            });
-        });
-
-        observer.observe(hiddenDiv, { attributes: true });
-
-        return function nextTick(fn) {
-            if (!queue.length) {
-                hiddenDiv.setAttribute('yes', 'no');
-            }
-            queue.push(fn);
-        };
-    }
-
-    if (canPost) {
-        window.addEventListener('message', function (ev) {
-            var source = ev.source;
-            if ((source === window || source === null) && ev.data === 'process-tick') {
-                ev.stopPropagation();
-                if (queue.length > 0) {
-                    var fn = queue.shift();
-                    fn();
-                }
-            }
-        }, true);
-
-        return function nextTick(fn) {
-            queue.push(fn);
-            window.postMessage('process-tick', '*');
-        };
-    }
-
-    return function nextTick(fn) {
-        setTimeout(fn, 0);
-    };
-})();
-
-process.title = 'browser';
-process.browser = true;
-process.env = {};
-process.argv = [];
-
-function noop() {}
-
-process.on = noop;
-process.addListener = noop;
-process.once = noop;
-process.off = noop;
-process.removeListener = noop;
-process.removeAllListeners = noop;
-process.emit = noop;
-
-process.binding = function (name) {
-    throw new Error('process.binding is not supported');
-};
-
-// TODO(shtylman)
-process.cwd = function () { return '/' };
-process.chdir = function (dir) {
-    throw new Error('process.chdir is not supported');
-};
-
-},{}],9:[function(require,module,exports){
+},{}],12:[function(require,module,exports){
 module.exports = function isBuffer(arg) {
   return arg && typeof arg === 'object'
     && typeof arg.copy === 'function'
     && typeof arg.fill === 'function'
     && typeof arg.readUInt8 === 'function';
 }
-},{}],10:[function(require,module,exports){
+},{}],13:[function(require,module,exports){
 (function (process,global){
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -1612,23 +2876,56 @@ function hasOwnProperty(obj, prop) {
 }
 
 }).call(this,require('_process'),typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{"./support/isBuffer":9,"_process":8,"inherits":6}],11:[function(require,module,exports){
-/*! @license ©2013 Ruben Verborgh - Multimedia Lab / iMinds / Ghent University */
-/** Main ldf-client module exports. */
-var SparqlResultWriter = require('./lib/writers/SparqlResultWriter');
-SparqlResultWriter.register('application/json', './JSONResultWriter');
-SparqlResultWriter.register('application/sparql-results+json', './SparqlJSONResultWriter');
-SparqlResultWriter.register('application/sparql-results+xml', './SparqlXMLResultWriter');
+},{"./support/isBuffer":12,"_process":5,"inherits":4}],14:[function(require,module,exports){
+// Make the ldf-client module available as a global browser object
+window.ldf = require('./ldf-client');
+window.N3  = require('./node_modules/n3'); // expose the same N3 version as used in the client
 
-module.exports = {
+},{"./ldf-client":15,"./node_modules/n3":45}],15:[function(require,module,exports){
+/*! @license ©2013-2015 Ruben Verborgh - Multimedia Lab / iMinds / Ghent University */
+/** Main ldf-client module exports. */
+
+// Replace local `require` by a lazy loader,
+// so we can keep `require` calls for static analyzers such as browserify
+var globalRequire = require;
+require = function (path) { return function () { return require(path); } };
+
+// Temporarily set lazy initializers as exports
+var exports = module.exports = {
   SparqlIterator: require('./lib/triple-pattern-fragments/SparqlIterator.js'),
-  FragmentsClient: require('./lib/triple-pattern-fragments/FragmentsClient'),
+  FragmentsClient: require('./lib/triple-pattern-fragments/federated/FederatedFragmentsClient'),
   Logger: require('./lib/util/Logger'),
   HttpClient: require('./lib/util/HttpClient'),
-  SparqlResultWriter: SparqlResultWriter,
+  SparqlResultWriter: function () {
+    var SparqlResultWriter = require('./lib/writers/SparqlResultWriter');
+    SparqlResultWriter.register('application/json', './JSONResultWriter');
+    SparqlResultWriter.register('application/sparql-results+json', './SparqlJSONResultWriter');
+    SparqlResultWriter.register('application/sparql-results+xml', './SparqlXMLResultWriter');
+    SparqlResultWriter.register('debug',  './StatsResultWriter');
+    SparqlResultWriter.register('simple', './SimpleResultWriter');
+    SparqlResultWriter.register('table',  './TableResultWriter');
+    return SparqlResultWriter;
+  },
 };
 
-},{"./lib/triple-pattern-fragments/FragmentsClient":23,"./lib/triple-pattern-fragments/SparqlIterator.js":25,"./lib/util/HttpClient":31,"./lib/util/Logger":32,"./lib/writers/SparqlResultWriter":37}],12:[function(require,module,exports){
+// Replace exports by properties that load on demand
+Object.keys(exports).forEach(function (submodule) {
+  var loadSubmodule = exports[submodule];
+  Object.defineProperty(exports, submodule, {
+    configurable: true,
+    enumerable: true,
+    get: function () {
+      // Replace the (currently executing) lazy property handler by the actual module
+      delete exports[submodule];
+      return exports[submodule] = loadSubmodule();
+    },
+  });
+});
+
+// Restore original require
+require = globalRequire;
+
+},{"./lib/triple-pattern-fragments/SparqlIterator.js":29,"./lib/triple-pattern-fragments/federated/FederatedFragmentsClient":33,"./lib/util/HttpClient":36,"./lib/util/Logger":37,"./lib/writers/SparqlResultWriter":42}],16:[function(require,module,exports){
 /*! @license ©2014 Ruben Verborgh - Multimedia Lab / iMinds / Ghent University */
 /* A CompositeExtractor combines metadata from different extractors. */
 
@@ -1648,31 +2945,42 @@ function CompositeExtractor(extractors) {
     return new CompositeExtractor(extractors);
   MetadataExtractor.call(this);
 
+  // Extractors are grouped per type.
+  // If the extractors were passed as an array, assume they all have an empty type.
   this._extractors = _.isArray(extractors) ? { '': extractors } : extractors;
+  // Disable extraction if no type has any extractors
   if (!_.any(this._extractors, 'length')) this._extractors = null;
 }
 MetadataExtractor.inherits(CompositeExtractor);
 
 /* Extracts metadata from the stream of triples. */
 CompositeExtractor.prototype._extract = function (metadata, tripleStream, callback) {
-  _.each(this._extractors || void callback(null, {}), function (extractors, type) {
-    var combined, pending = extractors.length;
-    function addMetadata(error, metadata) {
+  // Collect and emit metadata per type
+  _.each(this._extractors || void callback(null, {}), function (extractorsForType, type) {
+    // Combine metadata from all extractors of the type
+    var combined, pending = extractorsForType.length;
+    _.each(extractorsForType, function (e) { e.extract(metadata, tripleStream, collect); });
+
+    // Collects metadata of a specific extractor
+    function collect(error, metadata) {
+      // Incorporate the metadata only if no extraction error occurred
       if (!error)
         combined = combined ? _.defaults(combined, metadata) : metadata;
+      // If all extractors of this type have completed, emit the combined metadata
       if (--pending === 0) {
-        var result = combined;
-        if (type) result = {}, result[type] = combined;
-        callback(null, result);
+        // If emitting combined metadata for a specific type,
+        // wrap the result in an object with the type as key ({ type: combined })
+        if (type)
+          metadata = combined, combined = {}, combined[type] = metadata;
+        callback(null, combined || {});
       }
     }
-    _.each(extractors, function (e) { e.extract(metadata, tripleStream, addMetadata); });
   });
 };
 
 module.exports = CompositeExtractor;
 
-},{"./MetadataExtractor":15,"lodash":38}],13:[function(require,module,exports){
+},{"./MetadataExtractor":19,"lodash":43}],17:[function(require,module,exports){
 /*! @license ©2014 Ruben Verborgh - Multimedia Lab / iMinds / Ghent University */
 /* A ControlsExtractor extracts hypermedia controls from a triple stream. */
 
@@ -1682,7 +2990,7 @@ var MetadataExtractor = require('./MetadataExtractor'),
     assert = require('assert');
 
 // Extract these types of links from representations
-var LINK_TYPES = ['firstPage', 'nextPage', 'previousPage', 'lastPage'];
+var LINK_TYPES = ['first', 'next', 'previous', 'last'];
 
 /**
  * Creates a new `ControlsExtractor`.
@@ -1715,7 +3023,9 @@ ControlsExtractor.prototype._extract = function (metadata, tripleStream, callbac
 
     // Parse the links
     LINK_TYPES.forEach(function (property) {
-      var linkTargets = (controlData[property] || {})[controls.fragment];
+      // check first the correct hydra:next, then the deprecated hydra:nextPage
+      var links = controlData[property] || controlData[property + 'Page'],
+          linkTargets = links && links[controls.fragment];
       if (linkTargets && linkTargets.length > 0)
         Object.defineProperty(controls, property, { value: linkTargets[0], enumerable: true });
     });
@@ -1776,7 +3086,7 @@ LINK_TYPES.forEach(function (property) {
 
 module.exports = ControlsExtractor;
 
-},{"../util/RdfUtil":33,"./MetadataExtractor":15,"assert":3,"uritemplate":52}],14:[function(require,module,exports){
+},{"../util/RdfUtil":38,"./MetadataExtractor":19,"assert":1,"uritemplate":58}],18:[function(require,module,exports){
 /*! @license ©2014 Ruben Verborgh - Multimedia Lab / iMinds / Ghent University */
 /* A CountExtractor extracts count metadata from a triple stream. */
 
@@ -1809,7 +3119,8 @@ CountExtractor.prototype._extract = function (metadata, tripleStream, callback) 
 
   // Tries to extract count information from the triple
   function extractCount(triple) {
-    if (triple.predicate in countPredicates && triple.subject === metadata.fragmentUrl) {
+    if (triple.predicate in countPredicates &&
+        rdf.decodedURIEquals(triple.subject, metadata.fragmentUrl)) {
       var count = triple.object.match(/\d+/);
       count && sendMetadata({ totalTriples: parseInt(count[0], 10) });
     }
@@ -1834,7 +3145,7 @@ function toHash(array) {
 
 module.exports = CountExtractor;
 
-},{"../util/RdfUtil":33,"./MetadataExtractor":15}],15:[function(require,module,exports){
+},{"../util/RdfUtil":38,"./MetadataExtractor":19}],19:[function(require,module,exports){
 /*! @license ©2014 Ruben Verborgh - Multimedia Lab / iMinds / Ghent University */
 /* MetadataExtractor is a base class for objects that extract metadata from a triple stream. */
 
@@ -1892,7 +3203,7 @@ MetadataExtractor.prototype._extract = function (metadata, tripleStream, callbac
 
 module.exports = MetadataExtractor;
 
-},{"util":10}],16:[function(require,module,exports){
+},{"util":13}],20:[function(require,module,exports){
 /*! @license ©2014 Ruben Verborgh - Multimedia Lab / iMinds / Ghent University */
 /* A DistinctIterator emits the unique items from a source. */
 
@@ -1927,7 +3238,7 @@ function createHash(object) {
 
 module.exports = DistinctIterator;
 
-},{"./FilterIterator":17,"crypto":35}],17:[function(require,module,exports){
+},{"./FilterIterator":21,"crypto":41}],21:[function(require,module,exports){
 /*! @license ©2014 Ruben Verborgh - Multimedia Lab / iMinds / Ghent University */
 /* A FilterIterator filters the results of another iterator. */
 
@@ -1964,7 +3275,7 @@ FilterIterator.prototype._filter = function (item) {
 
 module.exports = FilterIterator;
 
-},{"./Iterator":18}],18:[function(require,module,exports){
+},{"./Iterator":22}],22:[function(require,module,exports){
 /*! @license ©2014 Ruben Verborgh - Multimedia Lab / iMinds / Ghent University */
 /* An iterator allows fast pull-based access to a stream of items. */
 
@@ -2254,6 +3565,10 @@ Iterator.prototype.clone = function () {
     // Pass errors from the source
     this.on('error', function (error) { clone.emit('error', error); });
   }
+  // Inherit toString of parent
+  var toString = this.toString();
+  clone.toString = function () { return '(cloneOf) ' + toString; };
+
   return clone;
 };
 
@@ -2486,7 +3801,7 @@ Iterator.StreamIterator = Iterator.fromStream = PassthroughIterator;
 Iterator.PassthroughIterator = Iterator.passthrough = PassthroughIterator;
 Iterator.BufferIterator = Iterator.buffered = BufferIterator;
 
-},{"events":5,"util":10}],19:[function(require,module,exports){
+},{"events":3,"util":13}],23:[function(require,module,exports){
 /*! @license ©2014 Ruben Verborgh - Multimedia Lab / iMinds / Ghent University */
 /* A LimitIterator emits a given number of items from a source. */
 
@@ -2529,7 +3844,7 @@ LimitIterator.prototype._read = function () {
 
 module.exports = LimitIterator;
 
-},{"./Iterator":18}],20:[function(require,module,exports){
+},{"./Iterator":22}],24:[function(require,module,exports){
 /*! @license ©2014 Ruben Verborgh - Multimedia Lab / iMinds / Ghent University */
 /* A MultiTransformIterator transforms items of a source into zero, one, or multiple items.
     To this end, it creates a new transforming iterator for each item it reads from the source. */
@@ -2637,7 +3952,7 @@ MultiTransformIterator.prototype._flush = function () {
 
 module.exports = MultiTransformIterator;
 
-},{"./Iterator":18}],21:[function(require,module,exports){
+},{"./Iterator":22}],25:[function(require,module,exports){
 /*! @license ©2014 Ruben Verborgh - Multimedia Lab / iMinds / Ghent University */
 /* A SortIterator emits the items of a source in a sorted way. */
 
@@ -2698,7 +4013,7 @@ function defaultSort(a, b) {
 
 module.exports = SortIterator;
 
-},{"./Iterator":18}],22:[function(require,module,exports){
+},{"./Iterator":22}],26:[function(require,module,exports){
 /*! @license ©2014 Ruben Verborgh - Multimedia Lab / iMinds / Ghent University */
 /* A UnionIterator returns the results from a set of source iterators. */
 
@@ -2759,7 +4074,7 @@ UnionIterator.prototype._read = function () {
 
 module.exports = UnionIterator;
 
-},{"./Iterator":18}],23:[function(require,module,exports){
+},{"./Iterator":22}],27:[function(require,module,exports){
 /*! @license ©2014 Ruben Verborgh - Multimedia Lab / iMinds / Ghent University */
 /* A FragmentsClient fetches Triple Pattern Fragments through HTTP. */
 
@@ -2788,7 +4103,7 @@ function FragmentsClient(startFragment, options) {
 
   // Set HTTP and cache options
   options = _.defaults(options || {}, { contentType: DEFAULT_ACCEPT });
-  this._cache = new Cache({ max: 100 });
+  var cache = this._cache = new Cache({ max: 100 });
   this._httpClient = options.httpClient || new HttpClient(options);
 
   // Extract counts and triple pattern fragments controls by default
@@ -2805,8 +4120,13 @@ function FragmentsClient(startFragment, options) {
       startFragment.loadFromUrl(startFragmentUrl);
     }
     this._startFragment = startFragment;
+    // If the start fragment errors, we cannot fetch any subsequent fragments
     startFragment.setMaxListeners(100); // several error listeners might be attached temporarily
-    startFragment.once('error', function (error) { startFragment.error = error; });
+    startFragment.once('error', function (error) {
+      cache.reset(); // disable caching if the start fragments fails (would be errors anyway)
+      startFragment.error = error; // store the error to return it on all accesses
+    });
+    // If the controls load, no (relevant) errors can occur anymore
     startFragment.getProperty('controls', function () {
       startFragment.error = null;
       startFragment.removeAllListeners('error');
@@ -2821,14 +4141,14 @@ FragmentsClient.prototype.getFragmentByPattern = function (pattern) {
   if (cache.has(key))
     return cache.get(key).clone();
   // Create a dummy iterator until the fragment is loaded
-  var fragment = new Fragment(this);
+  var fragment = new Fragment(this, pattern);
 
-  // Ensure the start fragment is loaded correctly
+  // Check if the start fragment was loaded without error
   var startFragment = this._startFragment;
-  if (startFragment.error !== null) {
-    if (startFragment.error)
+  if (startFragment.error !== null) { // null means definitely correctly loaded
+    if (startFragment.error)          // an error means definitely incorrectly loaded
       return setImmediate(startFragmentError), fragment;
-    startFragment.once('error', startFragmentError);
+    startFragment.once('error', startFragmentError); // undefined means we don't know yet
   }
   function startFragmentError() { fragment.emit('error', startFragment.error); fragment._end(); }
 
@@ -2851,12 +4171,13 @@ FragmentsClient.prototype.getFragmentByPattern = function (pattern) {
 };
 
 // Creates a new Triple Pattern Fragment
-function Fragment(fragmentsClient) {
+function Fragment(fragmentsClient, pattern) {
   if (!(this instanceof Fragment))
     return new Fragment(fragmentsClient);
   Iterator.call(this);
 
   this._fragmentsClient = fragmentsClient;
+  this._pattern = pattern;
 }
 Iterator.inherits(Fragment);
 
@@ -2911,7 +4232,7 @@ Fragment.prototype.loadFromUrl = function (pageUrl) {
       function loadNextPage() {
         // Find the next page's URL through hypermedia controls in the current page
         var nextPage;
-        try { nextPage = controls && controls.nextPage; } catch (controlError) {}
+        try { nextPage = controls && controls.next; } catch (controlError) {}
         // Load the next page, or end if none was found
         nextPage ? self.loadFromUrl(nextPage) : self._end();
       }
@@ -2930,9 +4251,14 @@ Fragment.prototype.empty = function () {
   return this._end(), this;
 };
 
+Fragment.prototype.toString = function () {
+  return '[' + this.constructor.name +
+         ' {' + rdf.toQuickString(this._pattern) + ')}';
+};
+
 module.exports = FragmentsClient;
 
-},{"../extractors/CompositeExtractor":12,"../extractors/ControlsExtractor":13,"../extractors/CountExtractor":14,"../iterators/Iterator":18,"../util/HttpClient":31,"../util/RdfUtil":33,"./TrigFragmentIterator":26,"./TurtleFragmentIterator":28,"lodash":38,"lru-cache":39}],24:[function(require,module,exports){
+},{"../extractors/CompositeExtractor":16,"../extractors/ControlsExtractor":17,"../extractors/CountExtractor":18,"../iterators/Iterator":22,"../util/HttpClient":36,"../util/RdfUtil":38,"./TrigFragmentIterator":30,"./TurtleFragmentIterator":32,"lodash":43,"lru-cache":44}],28:[function(require,module,exports){
 /*! @license ©2014 Ruben Verborgh - Multimedia Lab / iMinds / Ghent University */
 /* A ReorderingGraphPatternIterator builds bindings by reading matches for a basic graph pattern. */
 
@@ -2987,8 +4313,9 @@ ReorderingGraphPatternIterator.prototype._createTransformer = function (bindings
       Logger.logBinding(this, bindings, triplePattern, metadata.totalTriples);
       // We don't need more data from the fragment
       fragment.close();
-      // If there are no matches, the entire graph pattern has no matches
-      if (metadata.totalTriples === 0)
+      // If this triple pattern has no matches, the entire graph pattern has no matches
+      // totalTriples can either be 0 (no matches) or undefined (no count in fragment)
+      if (!metadata.totalTriples)
         return pipeline._end();
       // This triple pattern is the best if it has the lowest number of matches
       if (metadata.totalTriples < minMatches)
@@ -3033,7 +4360,7 @@ ReorderingGraphPatternIterator.prototype.toString = function () {
 
 module.exports = ReorderingGraphPatternIterator;
 
-},{"../iterators/Iterator":18,"../iterators/MultiTransformIterator":20,"../util/ExecutionLogger":30,"../util/RdfUtil":33,"./TriplePatternIterator":27,"lodash":38}],25:[function(require,module,exports){
+},{"../iterators/Iterator":22,"../iterators/MultiTransformIterator":24,"../util/ExecutionLogger":35,"../util/RdfUtil":38,"./TriplePatternIterator":31,"lodash":43}],29:[function(require,module,exports){
 /*! @license ©2014 Ruben Verborgh - Multimedia Lab / iMinds / Ghent University */
 /* An SparqlIterator returns the results of a SPARQL query. */
 
@@ -3075,9 +4402,11 @@ function SparqlIterator(source, queryText, options) {
       var order = SparqlExpressionEvaluator(query.order[i].expression),
           ascending = !query.order[i].descending;
       graphIterator = new SortIterator(graphIterator, function (a, b) {
-        var orderA = order(a), orderB = order(b);
+        var orderA = '', orderB = '';
+        try { orderA = order(a); } catch (error) {}
+        try { orderB = order(b); } catch (error) {}
         if (orderA < orderB) return ascending ? -1 :  1;
-        if (orderB < orderA) return ascending ?  1 : -1;
+        if (orderA > orderB) return ascending ?  1 : -1;
         return 0;
       }, options);
     }
@@ -3123,15 +4452,19 @@ SparqlSelectIterator.prototype._transform = function (bindings, done) {
   this._push(this.getProperty('variables').reduce(function (row, variable) {
     // Project a simple variable by copying its value
     if (variable !== '*')
-      row[variable] = rdf.deskolemize(bindings[variable]);
+      row[variable] = valueOf(variable);
     // Project a star selector by copying all variable bindings
     else
       for (variable in bindings)
         if (rdf.isVariable(variable))
-          row[variable] = rdf.deskolemize(bindings[variable]);
+          row[variable] = valueOf(variable);
     return row;
   }, Object.create(null)));
   done();
+  function valueOf(variable) {
+    var value = bindings[variable];
+    return typeof(value) === 'string' ? rdf.deskolemize(value) : null;
+  }
 };
 
 
@@ -3231,10 +4564,12 @@ function SparqlGroupIterator(source, group, options) {
       return new SparqlGroupIterator(source.clone(), patternToken, childOptions);
     }), options);
   case 'filter':
-    // A set of bindings matches the filter if it doesn't evaluate to 0 or false
+    // A set of bindings does not match the filter
+    // if it evaluates to 0/false, or errors
     var evaluate = SparqlExpressionEvaluator(group.expression);
     return new FilterIterator(source, function (bindings) {
-      return !/^"false"|^"0"/.test(evaluate(bindings));
+      try { return !/^"false"|^"0"/.test(evaluate(bindings)); }
+      catch (error) { return false; }
     }, options);
   default:
     throw new Error('Unsupported group type: ' + group.type);
@@ -3258,7 +4593,7 @@ module.exports = SparqlIterator;
 SparqlIterator.InvalidQueryError = InvalidQueryError;
 SparqlIterator.UnsupportedQueryError = UnsupportedQueryError;
 
-},{"../iterators/DistinctIterator":16,"../iterators/FilterIterator":17,"../iterators/Iterator":18,"../iterators/LimitIterator":19,"../iterators/SortIterator":21,"../iterators/UnionIterator":22,"../util/CustomError":29,"../util/RdfUtil":33,"../util/SparqlExpressionEvaluator":34,"./ReorderingGraphPatternIterator":24,"lodash":38,"sparqljs":51,"util":10}],26:[function(require,module,exports){
+},{"../iterators/DistinctIterator":20,"../iterators/FilterIterator":21,"../iterators/Iterator":22,"../iterators/LimitIterator":23,"../iterators/SortIterator":25,"../iterators/UnionIterator":26,"../util/CustomError":34,"../util/RdfUtil":38,"../util/SparqlExpressionEvaluator":40,"./ReorderingGraphPatternIterator":28,"lodash":43,"sparqljs":57,"util":13}],30:[function(require,module,exports){
 /*! @license ©2013 Ruben Verborgh - Multimedia Lab / iMinds / Ghent University */
 /* A TrigFragmentIterator reads data and metadata from Linked Data Fragments in TriG. */
 
@@ -3286,7 +4621,7 @@ TrigFragmentIterator.supportsContentType = function (contentType) {
 
 module.exports = TrigFragmentIterator;
 
-},{"./TurtleFragmentIterator":28}],27:[function(require,module,exports){
+},{"./TurtleFragmentIterator":32}],31:[function(require,module,exports){
 /*! @license ©2014 Ruben Verborgh - Multimedia Lab / iMinds / Ghent University */
 /* A TriplePatternIterator builds bindings by reading matches for a triple pattern. */
 
@@ -3339,7 +4674,7 @@ TriplePatternIterator.prototype.toString = function () {
 
 module.exports = TriplePatternIterator;
 
-},{"../iterators/MultiTransformIterator":20,"../util/ExecutionLogger":30,"../util/RdfUtil":33}],28:[function(require,module,exports){
+},{"../iterators/MultiTransformIterator":24,"../util/ExecutionLogger":35,"../util/RdfUtil":38}],32:[function(require,module,exports){
 /*! @license ©2013 Ruben Verborgh - Multimedia Lab / iMinds / Ghent University */
 /* A TurtleFragmentIterator reads data and metadata from Linked Data Fragments in Turtle. */
 
@@ -3407,7 +4742,145 @@ TurtleFragmentIterator.supportsContentType = function (contentType) {
 
 module.exports = TurtleFragmentIterator;
 
-},{"../iterators/Iterator":18,"../util/RdfUtil":33,"n3":40}],29:[function(require,module,exports){
+},{"../iterators/Iterator":22,"../util/RdfUtil":38,"n3":45}],33:[function(require,module,exports){
+var FragmentsClient = require('../FragmentsClient'),
+  Iterator = require('../../iterators/Iterator'),
+  rdf = require('../../util/RdfUtil'),
+  _ = require('lodash');
+
+function FederatedFragmentsClient(startFragments, options) {
+  if (!(this instanceof FederatedFragmentsClient))
+    return new FederatedFragmentsClient(startFragments, options);
+
+  // If only one fragment is given, return original client
+  if (!_.isArray(startFragments))
+    return new FragmentsClient(startFragments, options);
+  if (startFragments.length === 1)
+    return new FragmentsClient(startFragments[0], options);
+
+  // Create clients for each of the start fragments
+  var clients = this._clients = (startFragments || []).map(function (startFragment) {
+    var client = new FragmentsClient(startFragment, options);
+    client._emptyPatterns = [];
+    return client;
+  });
+
+  this._options = _.extend({
+    // By default, continue query execution if all but one client fail
+    allowedFragmentErrors: clients.length - 1,
+  }, options);
+}
+
+FederatedFragmentsClient.prototype.getFragmentByPattern = function (pattern) {
+  var fragments = [];
+  this._clients.forEach(function (client) {
+    // Check whether the pattern is a bound version of a pattern we know to be empty;
+    // in that case, a stricter pattern such as the current one cannot have matches.
+    var empty = _.some(client._emptyPatterns, rdf.isBoundPatternOf.bind(null, pattern));
+    if (!empty) {
+      var fragment = client.getFragmentByPattern(pattern);
+      fragment.getProperty('metadata', function (metadata) {
+        if (metadata.totalTriples === 0)
+          client._emptyPatterns.push(pattern);
+      });
+      fragments.push(fragment);
+    }
+  });
+
+  return new CompoundFragment(fragments, this._options);
+};
+
+// Creates a new compound Triple Pattern Fragment
+function CompoundFragment(fragments, options) {
+  if (!(this instanceof CompoundFragment))
+    return new CompoundFragment(fragments, options);
+  Iterator.call(this);
+
+  // If no fragments are given, the fragment is empty
+  if (!fragments || !fragments.length)
+    return this.empty(), this;
+
+  // Add fragments to queue and initialize metadata
+  var pendingFragments = this._pendingFragments = _.indexBy(fragments, getIndex),
+      combinedMetadata = this._metadata = { totalTriples: 0 },
+      pendingFragmentsCount = fragments.length,
+      pendingMetadataCount  = fragments.length,
+      allowedErrors = options.allowedFragmentErrors || 0;
+
+  var self = this;
+  _.each(pendingFragments, function (fragment, index) {
+    fragment.on('readable', emitReadable);
+
+    // Process the metadata of the fragment
+    var processMetadata = _.once(function (fragmentMetadata) {
+      // Sum the metadata if it exists
+      if (fragmentMetadata.totalTriples)
+        combinedMetadata.totalTriples += fragmentMetadata.totalTriples;
+      // If no metadata is pending anymore, we can emit it
+      if (--pendingMetadataCount === 0)
+        self.setProperty('metadata', combinedMetadata);
+    });
+    fragment.getProperty('metadata', processMetadata);
+
+    // Process the end of the fragment
+    var fragmentDone = _.once(function () {
+      // Remove the fragment from the queue
+      delete pendingFragments[index];
+      // If no fragments are pending anymore, the iterator ends
+      if (--pendingFragmentsCount === 0)
+        self._end();
+    });
+    fragment.on('end', fragmentDone);
+
+    fragment.on('error', function (error) {
+      // TODO: Make error handling behavior configurable
+      // Only error if all of the sources error
+      if (allowedErrors-- === 0)
+        return self.emit('error', error);
+      // Otherwise, silently assume there are no results
+      processMetadata({});
+      fragmentDone();
+    });
+  });
+
+  function emitReadable() { self.emit('readable'); }
+}
+Iterator.inherits(CompoundFragment);
+
+// Reads an element of the first non-empty child fragment
+CompoundFragment.prototype._read = function () {
+  if (this._reading) return;
+  this._reading = true;
+
+  _.find(this._pendingFragments, function (fragment, item) {
+    if (item = fragment.read()) {
+      this._push(item);
+      return true;
+    }
+  }, this);
+
+  this._reading = false;
+};
+
+// Empties the fragment
+CompoundFragment.prototype.empty = function () {
+  if (!this.getProperty('metadata'))
+    this.setProperty('metadata', { totalTriples: 0 });
+  this._end();
+};
+
+// Returns a textual representation of the fragment
+CompoundFragment.prototype.toString = function () {
+  return this.toString() + '{' +
+         _.map(this._pendingFragments, function (f) { return f.toString(); }).join(', ') + '}';
+};
+
+// Collection iterator that returns the second argument (index)
+function getIndex(element, index) { return index; }
+
+module.exports = FederatedFragmentsClient;
+
+},{"../../iterators/Iterator":22,"../../util/RdfUtil":38,"../FragmentsClient":27,"lodash":43}],34:[function(require,module,exports){
 /*! @license ©2014 Ruben Verborgh - Multimedia Lab / iMinds / Ghent University */
 
 // Creates a constructor for an Error with the given name
@@ -3429,7 +4902,7 @@ function createErrorType(name, init) {
 
 module.exports = createErrorType;
 
-},{}],30:[function(require,module,exports){
+},{}],35:[function(require,module,exports){
 /*! @license ©2013 Miel Vander Sande - Multimedia Lab / iMinds / Ghent University
  * */
 var Logger = require('./Logger'), util = require('util'), Iterator = require('../iterators/Iterator');
@@ -3470,14 +4943,15 @@ ExecutionLogger.index = 1;
 
 module.exports = ExecutionLogger;
 
-},{"../iterators/Iterator":18,"./Logger":32,"util":10}],31:[function(require,module,exports){
+},{"../iterators/Iterator":22,"./Logger":37,"util":13}],36:[function(require,module,exports){
 /*! @license ©2014 Ruben Verborgh - Multimedia Lab / iMinds / Ghent University */
 
 var Iterator = require('../iterators/Iterator'),
-    request = require('request'),
+    request = require('./Request'),
     Logger = require('../util/Logger.js'),
     zlib = require('zlib'),
-    _ = require('lodash');
+    _ = require('lodash'),
+    parseLink = require('parse-link-header');
 
 var activeRequests = {}, requestId = 0;
 
@@ -3495,7 +4969,11 @@ function HttpClient(options) {
 
   options = options || {};
   this._request = options.request || request;
-  this._contentType = options.contentType || '*/*';
+  this._defaultHeaders = _.pick({
+    'accept': options.contentType || '*/*',
+    'accept-encoding': 'gzip,deflate',
+    'accept-datetime': options.datetime && options.datetime.toUTCString(),
+  }, _.identity);
   this._queue = [];
   this._activeRequests = 0;
   this._maxActiveRequests = options.concurrentRequests || 20;
@@ -3522,68 +5000,69 @@ HttpClient.prototype.get = function (url, headers, options) {
  * @returns {Iterator} An iterator of the representation
  */
 HttpClient.prototype.request = function (url, method, headers, options) {
-  var responseIterator = new Iterator.PassthroughIterator(true), self = this;
+  var self = this, responseIterator = new Iterator.PassthroughIterator(true);
 
   function performRequest() {
-    self._logger.info('Requesting', url);
     self._activeRequests++;
+    self._logger.info('Requesting', url);
 
     // Create the request
-    var acceptHeaders = { accept: self._contentType, 'accept-encoding': 'gzip,deflate' };
-    var requestOptions = {
+    var request, startTime = new Date(),
+        requestHeaders = _.assign({}, self._defaultHeaders, headers),
+        requestOptions = _.assign({
       url: url,
       method: method || 'GET',
-      headers: headers ? _.assign(acceptHeaders, headers) : acceptHeaders,
+      headers: requestHeaders,
       timeout: 5000,
-      followRedirect: true,
-    }, request, startTime = new Date();
-    try { request = self._request(options ? _.assign(requestOptions, options) : requestOptions); }
+      followRedirect: true
+    }, options);
+    try { request = self._request(requestOptions); }
     catch (error) { return setImmediate(emitError, error), responseIterator; }
     activeRequests[request._id = requestId++] = request;
-    function emitError(error) {
-      responseIterator._error(error);
-      delete activeRequests[request && request._id];
-    }
 
-    // React to a possible response
+    // Reply to its response
     request.on('response', function (response) {
-      var statusCode = response.statusCode, headers = response.headers,
-          responseTime = new Date() - startTime, encoding, contentType, nextRequest;
       // Start a possible queued request
-      delete activeRequests[request._id];
-      self._activeRequests--;
-      (nextRequest = self._queue.shift()) && nextRequest();
+      if (delete activeRequests[request._id])
+        self._activeRequests--;
+      var nextRequest = self._queue.shift();
+      nextRequest && nextRequest();
 
-      // Decompress the response when necessary
-      switch (encoding = headers['content-encoding'] || '') {
-      case 'gzip':
-        response.pipe(response = zlib.createGunzip());
-        break;
-      case 'deflate':
-        response.pipe(response = zlib.createInflate());
-        break;
-      case '':
-        break;
-      default:
-        return responseIterator._error(new Error('Unsupported encoding: ' + encoding));
+      // Did we ask for a time-negotiated response, but haven't received one?
+      if (requestHeaders['accept-datetime'] && !response.headers['memento-datetime']) {
+        // The links might have a timegate that can help us
+        var links = response.headers.link && parseLink(response.headers.link);
+        if (links && links.timegate) {
+          // Try to obtain a time-negotiated response from the timegate instead
+          var timegateResponse = self.request(links.timegate.url, method, headers, options);
+          return responseIterator.setSource(timegateResponse);
+        }
       }
-      response.on('error', emitError);
 
-      // Redirect output to the iterator
-      response.setEncoding && response.setEncoding('utf8');
-      response.pause && response.pause();
-      responseIterator.setSource(response);
+      // Redirect output to the response iterator
+      var responseStream = self._decodeResponse(response);
+      responseStream.setEncoding && responseStream.setEncoding('utf8');
+      responseStream.pause && responseStream.pause();
+      responseIterator.setSource(responseStream);
       // Responses _must_ be entirely consumed,
       // or they can lead to out-of-memory errors (http://nodejs.org/api/http.html)
       responseIterator._bufferAll();
 
       // Emit the metadata
-      contentType = (headers['content-type'] || '').replace(/\s*(?:;.*)?$/, '');
-      responseIterator.setProperty('statusCode', statusCode);
-      responseIterator.setProperty('contentType', contentType);
-      responseIterator.setProperty('responseTime', responseTime);
-    })
-    .on('error', emitError);
+      responseIterator.setProperty('statusCode', response.statusCode);
+      responseIterator.setProperty('contentType',
+          (response.headers['content-type'] || '').replace(/\s*(?:;.*)?$/, ''));
+      responseIterator.setProperty('responseTime', new Date() - startTime);
+    });
+
+    // Return possible errors on the response iterator
+    request.on('error', emitError);
+    function emitError(error) {
+      if (!this._aborted || !error || error.code !== 'ETIMEDOUT')
+        responseIterator._error(error);
+      if (request && delete activeRequests[request._id])
+        self._activeRequests--;
+    }
   }
 
   // Start or enqueue the request
@@ -3593,6 +5072,26 @@ HttpClient.prototype.request = function (url, method, headers, options) {
     this._queue.push(performRequest);
 
   return responseIterator;
+};
+
+// Returns a decompressed stream from the HTTP response
+HttpClient.prototype._decodeResponse = function (response) {
+  var encoding = response.headers['content-encoding'] || '', decodedResponse = response;
+  switch (encoding) {
+  case '':
+    break;
+  case 'gzip':
+    response.pipe(decodedResponse = zlib.createGunzip());
+    break;
+  case 'deflate':
+    response.pipe(decodedResponse = zlib.createInflate());
+    break;
+  default:
+    setImmediate(function () {
+      response.emit('error', new Error('Unsupported encoding: ' + encoding));
+    });
+  }
+  return decodedResponse;
 };
 
 // Abort all active requests
@@ -3605,7 +5104,7 @@ HttpClient.abortAll = function () {
 
 module.exports = HttpClient;
 
-},{"../iterators/Iterator":18,"../util/Logger.js":32,"lodash":38,"request":36,"zlib":4}],32:[function(require,module,exports){
+},{"../iterators/Iterator":22,"../util/Logger.js":37,"./Request":39,"lodash":43,"parse-link-header":53,"zlib":2}],37:[function(require,module,exports){
 /*! @license ©2013 Ruben Verborgh - Multimedia Lab / iMinds / Ghent University */
 /* Extended by Miel Vander Sande: loosely based on log.js
  * https://github.com/visionmedia/log.js/blob/master/lib/log.js */
@@ -3713,7 +5212,7 @@ Logger.setMode = function (modeName) {
 
 module.exports = Logger;
 
-},{"./RdfUtil":33,"lodash":38}],33:[function(require,module,exports){
+},{"./RdfUtil":38,"lodash":43}],38:[function(require,module,exports){
 /*! @license ©2014 Ruben Verborgh - Multimedia Lab / iMinds / Ghent University */
 var N3 = require('n3'),
     _ = require('lodash');
@@ -3872,6 +5371,13 @@ util.addBinding = function (bindings, left, right) {
   return bindings;
 };
 
+/** Verifies whether the child pattern is a bound version of the parent pattern. */
+util.isBoundPatternOf = function (child, parent) {
+  return (util.isVariable(parent.subject)   || (parent.subject   === child.subject))   &&
+         (util.isVariable(parent.predicate) || (parent.predicate === child.predicate)) &&
+         (util.isVariable(parent.object)    || (parent.object    === child.object));
+};
+
 
 /* Methods for graph patterns */
 
@@ -3944,7 +5450,79 @@ function namespace(prefix, base, names) {
 
 Object.freeze(util);
 
-},{"lodash":38,"n3":40}],34:[function(require,module,exports){
+},{"lodash":43,"n3":45}],39:[function(require,module,exports){
+/*! @license ©2013 Ruben Verborgh - Multimedia Lab / iMinds / Ghent University */
+/** Browser replacement for the request module using jQuery. */
+
+var EventEmitter = require('events').EventEmitter,
+    SingleIterator = require('../../lib/iterators/Iterator').SingleIterator,
+    parseLink = require('parse-link-header'),
+    _ = require('lodash');
+
+require('setimmediate');
+
+// Headers we cannot send (see https://www.w3.org/TR/XMLHttpRequest/#the-setrequestheader()-method)
+var UNSAFE_REQUEST_HEADERS = ['accept-encoding', 'user-agent', 'referer'];
+// Headers we need to obtain
+var RESPONSE_HEADERS = ['content-type', 'content-location', 'link', 'memento-datetime'];
+
+// Resources that were already time-negotiated
+var negotiatedResources = Object.create(null);
+
+// Creates an HTTP request with the given settings
+function createRequest(settings) {
+  var request = new EventEmitter();
+
+  // PERFORMANCE HACK:
+  // Reduce OPTIONS preflight requests by removing the Accept-Datetime header
+  // on requests for resources that are presumed to have been time-negotiated
+  if (negotiatedResources[removeQuery(settings.url)])
+    delete settings.headers['accept-datetime'];
+
+  // Delegate the request to jQuery's AJAX module
+  var jqXHR = jQuery.ajax({
+    url: settings.url,
+    timeout: settings.timeout,
+    type: settings.method,
+    headers: _.omit(settings.headers, UNSAFE_REQUEST_HEADERS),
+  })
+  // Emit the result as a readable response iterator
+  .success(function () {
+    var response = new SingleIterator(jqXHR.responseText || '');
+    response.statusCode = jqXHR.status;
+    response.headers = _.object(RESPONSE_HEADERS, RESPONSE_HEADERS.map(jqXHR.getResponseHeader));
+    request.emit('response', response);
+
+    // If the resource was time-negotiated, store its "base" URI (= no query string)
+    if (settings.headers['accept-datetime'] && response.headers['memento-datetime']) {
+      var resource = removeQuery(response.headers['content-location'] || settings.url);
+      if (!negotiatedResources[resource]) {
+        // Ensure the resource is not a timegate
+        var links = response.headers.link && parseLink(response.headers.link),
+            timegate = removeQuery(links && links.timegate && links.timegate.url);
+        if (resource !== timegate)
+          negotiatedResources[resource] = true;
+      }
+    }
+  })
+  // Emit an error if the request fails
+  .fail(function () {
+    request.emit('error', new Error('Error requesting ' + settings.url));
+  });
+  // Aborts the request
+  request.abort = function () { jqXHR.abort(); };
+
+  return request;
+}
+
+// Removes the query string from a URL
+function removeQuery(url) {
+  return url ? url.replace(/\?.*$/, '') : '';
+}
+
+module.exports = createRequest;
+
+},{"../../lib/iterators/Iterator":22,"events":3,"lodash":43,"parse-link-header":53,"setimmediate":54}],40:[function(require,module,exports){
 /*! @license ©2014 Ruben Verborgh - Multimedia Lab / iMinds / Ghent University */
 
 var util = require('util'),
@@ -4155,7 +5733,7 @@ module.exports.UnsupportedExpressionError = UnsupportedExpressionError;
 module.exports.UnsupportedOperatorError = UnsupportedOperatorError;
 module.exports.InvalidArgumentsNumberError = InvalidArgumentsNumberError;
 
-},{"./CustomError":29,"n3":40,"util":10}],35:[function(require,module,exports){
+},{"./CustomError":34,"n3":45,"util":13}],41:[function(require,module,exports){
 /*! @license ©2015 Ruben Verborgh - Multimedia Lab / iMinds / Ghent University */
 /** Browser replacement for a subset of crypto. */
 
@@ -4279,41 +5857,7 @@ function toHexStr(n) {
   return s;
 }
 
-},{}],36:[function(require,module,exports){
-/*! @license ©2013 Ruben Verborgh - Multimedia Lab / iMinds / Ghent University */
-/** Browser replacement for the request module using jQuery. */
-
-var EventEmitter = require('events').EventEmitter,
-    SingleIterator = require('../../lib/iterators/Iterator').SingleIterator;
-
-require('setimmediate');
-
-// Requests the given resource as an iterator
-function createRequest(settings) {
-  var request = new EventEmitter();
-
-  // Delegate the request to jQuery's AJAX module
-  var jqXHR = jQuery.ajax({
-    url: settings.url,
-    timeout: settings.timeout,
-    type: settings.method,
-    headers: { accept: settings.headers && settings.headers.accept || '*/*' },
-  })
-  // Emit the result as a readable response iterator
-  .success(function () {
-    var response = new SingleIterator(jqXHR.responseText || '');
-    response.statusCode = jqXHR.status;
-    response.headers = { 'content-type': jqXHR.getResponseHeader('content-type') };
-    request.emit('response', response);
-  });
-  request.abort = function () { jqXHR.abort(); };
-
-  return request;
-}
-
-module.exports = createRequest;
-
-},{"../../lib/iterators/Iterator":18,"events":5,"setimmediate":48}],37:[function(require,module,exports){
+},{}],42:[function(require,module,exports){
 /*! @license ©2014 Miel Vander Sande - Multimedia Lab / iMinds / Ghent University */
 /* Serializing the output of a SparqlIterator */
 
@@ -4368,7 +5912,7 @@ SparqlResultWriter.prototype._writeBoolean = function (result, done) {
 
 module.exports = SparqlResultWriter;
 
-},{"../iterators/Iterator":18}],38:[function(require,module,exports){
+},{"../iterators/Iterator":22}],43:[function(require,module,exports){
 (function (global){
 /**
  * @license
@@ -11158,7 +12702,7 @@ module.exports = SparqlResultWriter;
 }.call(this));
 
 }).call(this,typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{}],39:[function(require,module,exports){
+},{}],44:[function(require,module,exports){
 ;(function () { // closure for web browsers
 
 if (typeof module === 'object' && module.exports) {
@@ -11413,7 +12957,7 @@ function Entry (key, value, lu, length, now) {
 
 })()
 
-},{}],40:[function(require,module,exports){
+},{}],45:[function(require,module,exports){
 // Replace local require by a lazy loader
 var globalRequire = require;
 require = function () {};
@@ -11441,7 +12985,7 @@ Object.keys(exports).forEach(function (submodule) {
   });
 });
 
-},{"./lib/N3Lexer":41,"./lib/N3Parser":42,"./lib/N3Store":43,"./lib/N3StreamParser":44,"./lib/N3StreamWriter":45,"./lib/N3Util":46,"./lib/N3Writer":47}],41:[function(require,module,exports){
+},{"./lib/N3Lexer":46,"./lib/N3Parser":47,"./lib/N3Store":48,"./lib/N3StreamParser":49,"./lib/N3StreamWriter":50,"./lib/N3Util":51,"./lib/N3Writer":52}],46:[function(require,module,exports){
 // **N3Lexer** tokenizes N3 documents.
 var fromCharCode = String.fromCharCode;
 var immediately = typeof setImmediate === 'function' ? setImmediate :
@@ -11471,7 +13015,7 @@ function N3Lexer(options) {
     this._tokenize = this.tokenize;
     this.tokenize = function (input, callback) {
       this._tokenize(input, function (error, token) {
-        if (!error && /IRI|prefixed|literal|langcode|type|\.|eof/.test(token.type))
+        if (!error && /^(?:IRI|prefixed|literal|langcode|type|\.|eof)$/.test(token.type))
           callback && callback(error, token);
         else
           callback && callback(error || self._syntaxError(token.type, callback = null));
@@ -11544,17 +13088,14 @@ N3Lexer.prototype = {
 
       case '<':
         // Try to find a full IRI without escape sequences.
-        if (match = this._unescapedIri.exec(input)) {
-          type = 'IRI';
-          value = match[1];
-        }
+        if (match = this._unescapedIri.exec(input))
+          type = 'IRI', value = match[1];
         // Try to find a full IRI with escape sequences.
         else if (match = this._iri.exec(input)) {
           unescaped = this._unescape(match[1]);
           if (unescaped === null || illegalIriChars.test(unescaped))
             return reportSyntaxError(this);
-          type = 'IRI';
-          value = unescaped;
+          type = 'IRI', value = unescaped;
         }
         break;
 
@@ -11563,27 +13104,21 @@ N3Lexer.prototype = {
         // we always need a non-dot character before deciding it is a prefixed name.
         // Therefore, try inserting a space if we're at the end of the input.
         if ((match = this._blank.exec(input)) ||
-            inputFinished && (match = this._blank.exec(input + ' '))) {
-          type = 'prefixed';
-          prefix = '_';
-          value = match[1];
-        }
+            inputFinished && (match = this._blank.exec(input + ' ')))
+          type = 'prefixed', prefix = '_', value = match[1];
         break;
 
       case '"':
       case "'":
         // Try to find a non-empty double-quoted literal without escape sequences.
-        if (match = this._unescapedString.exec(input)) {
-          type = 'literal';
-          value = match[0];
-        }
+        if (match = this._unescapedString.exec(input))
+          type = 'literal', value = match[0];
         // Try to find any other literal wrapped in a pair of single or double quotes.
         else if (match = this._singleQuotedString.exec(input)) {
           unescaped = this._unescape(match[0]);
           if (unescaped === null)
             return reportSyntaxError(this);
-          type = 'literal';
-          value = unescaped.replace(/^'|'$/g, '"');
+          type = 'literal', value = unescaped.replace(/^'|'$/g, '"');
         }
         // Try to find a literal wrapped in three pairs of single or double quotes.
         else if (match = this._tripleQuotedString.exec(input)) {
@@ -11593,21 +13128,17 @@ N3Lexer.prototype = {
           unescaped = this._unescape(unescaped);
           if (unescaped === null)
             return reportSyntaxError(this);
-          type = 'literal';
-          value = unescaped.replace(/^'|'$/g, '"');
+          type = 'literal', value = unescaped.replace(/^'|'$/g, '"');
         }
         break;
 
       case '@':
         // Try to find a language code.
-        if (this._prevTokenType === 'literal' && (match = this._langcode.exec(input))) {
-          type = 'langcode';
-          value = match[1];
-        }
+        if (this._prevTokenType === 'literal' && (match = this._langcode.exec(input)))
+          type = 'langcode', value = match[1];
         // Try to find a keyword.
-        else if (match = this._keyword.exec(input)) {
+        else if (match = this._keyword.exec(input))
           type = match[0];
-        }
         break;
 
       case '.':
@@ -11655,20 +13186,16 @@ N3Lexer.prototype = {
       case 'f':
       case 't':
         // Try to match a boolean.
-        if (match = this._boolean.exec(input)) {
-          type = 'literal';
-          value = '"' + match[0] + '"^^http://www.w3.org/2001/XMLSchema#boolean';
-        }
+        if (match = this._boolean.exec(input))
+          type = 'literal', value = '"' + match[0] + '"^^http://www.w3.org/2001/XMLSchema#boolean';
         else
           inconclusive = true;
         break;
 
       case 'a':
         // Try to find an abbreviated predicate.
-        if (match = this._shortPredicates.exec(input)) {
-          type = 'abbreviation';
-          value = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type';
-        }
+        if (match = this._shortPredicates.exec(input))
+          type = 'abbreviation', value = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type';
         else
           inconclusive = true;
         break;
@@ -11694,19 +13221,14 @@ N3Lexer.prototype = {
       if (inconclusive) {
         // Try to find a prefix.
         if ((this._prevTokenType === '@prefix' || this._prevTokenType === 'PREFIX') &&
-            (match = this._prefix.exec(input))) {
-          type = 'prefix';
-          value = match[1] || '';
-        }
+            (match = this._prefix.exec(input)))
+          type = 'prefix', value = match[1] || '';
         // Try to find a prefixed name. Since it can contain (but not end with) a dot,
         // we always need a non-dot character before deciding it is a prefixed name.
         // Therefore, try inserting a space if we're at the end of the input.
         else if ((match = this._prefixed.exec(input)) ||
-                 inputFinished && (match = this._prefixed.exec(input + ' '))) {
-          type = 'prefixed';
-          prefix = match[1] || '';
-          value = this._unescape(match[2]);
-        }
+                 inputFinished && (match = this._prefixed.exec(input + ' ')))
+          type = 'prefixed', prefix = match[1] || '', value = this._unescape(match[2]);
       }
 
       // A type token is special: it can only be emitted after an IRI or prefixed name is read.
@@ -11813,9 +13335,8 @@ N3Lexer.prototype = {
 
     // Parses until the end
     function end() {
-      if (self._input !== null) {
+      if (self._input !== null)
         self._tokenizeToEnd(callback, true);
-      }
     }
   },
 };
@@ -11825,7 +13346,7 @@ N3Lexer.prototype = {
 // Export the `N3Lexer` class as a whole.
 module.exports = N3Lexer;
 
-},{}],42:[function(require,module,exports){
+},{}],47:[function(require,module,exports){
 // **N3Parser** parses N3 documents.
 var N3Lexer = require('./N3Lexer');
 
@@ -11834,9 +13355,9 @@ var RDF_PREFIX = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#',
     RDF_FIRST  = RDF_PREFIX + 'first',
     RDF_REST   = RDF_PREFIX + 'rest';
 
-var absoluteIRI = /:/,
-    documentPart = /[^\/]*$/,
-    rootIRI = /^(?:[^:]+:\/*)?[^\/]*/;
+var absoluteIRI = /^[a-z][a-z0-9+.-]*:/i,
+    schemeAuthority = /^(?:([a-z][a-z0-9+.-]*:))?(?:\/\/[^\/]*)?/i,
+    dotSegments = /(?:^|\/)\.\.?(?:$|[\/#?])/;
 
 // The next ID for new blank nodes
 var blankNodePrefix = 0, blankNodeCount = 0;
@@ -11850,17 +13371,7 @@ function N3Parser(options) {
 
   // Set the document IRI.
   options = options || {};
-  if (!options.documentIRI) {
-    this._baseIRI = null;
-    this._baseIRIPath = null;
-  }
-  else {
-    if (options.documentIRI.indexOf('#') > 0)
-      throw new Error('Invalid document IRI');
-    this._baseIRI = options.documentIRI;
-    this._baseIRIPath = this._baseIRI.replace(documentPart, '');
-    this._baseIRIRoot = this._baseIRI.match(rootIRI)[0];
-  }
+  this._setBase(options.documentIRI);
 
   // Set supported features depending on the format.
   var format = (typeof options.format === 'string') && options.format.match(/\w*$/)[0].toLowerCase(),
@@ -11872,7 +13383,7 @@ function N3Parser(options) {
   this._supportsQuads = !(isTurtle || isTriG || isNTriples);
   // Disable relative IRIs in N-Triples or N-Quads mode
   if (isLineMode) {
-    this._baseIRI = '';
+    this._base = '';
     this._resolveIRI = function (token) {
       this._error('Disallowed relative IRI', token);
       return this._callback = noop, this._subject = null;
@@ -11892,6 +13403,21 @@ N3Parser._resetBlankNodeIds = function () {
 
 N3Parser.prototype = {
   // ## Private methods
+
+  // ### `_setBase` sets the base IRI to resolve relative IRIs.
+  _setBase: function (baseIRI) {
+    if (!baseIRI)
+      baseIRI = null;
+    else if (baseIRI.indexOf('#') >= 0)
+      throw new Error('Invalid base IRI ' + baseIRI);
+    // Set base IRI and its components
+    if (this._base = baseIRI) {
+      this._basePath   = baseIRI.replace(/[^\/?]*(?:\?.*)?$/, '');
+      baseIRI = baseIRI.match(schemeAuthority);
+      this._baseRoot   = baseIRI[0];
+      this._baseScheme = baseIRI[1];
+    }
+  },
 
   // ### `_readInTopContext` reads a token when in the top context.
   _readInTopContext: function (token) {
@@ -11924,9 +13450,8 @@ N3Parser.prototype = {
         return this._readSubject;
       }
     case 'GRAPH':
-      if (this._supportsNamedGraphs) {
+      if (this._supportsNamedGraphs)
         return this._readNamedGraphLabel;
-      }
     // Otherwise, the next token must be a subject.
     default:
       return this._readSubject(token);
@@ -11938,7 +13463,7 @@ N3Parser.prototype = {
     this._predicate = null;
     switch (token.type) {
     case 'IRI':
-      if (this._baseIRI === null || absoluteIRI.test(token.value))
+      if (this._base === null || absoluteIRI.test(token.value))
         this._subject = token.value;
       else
         this._subject = this._resolveIRI(token);
@@ -11975,21 +13500,18 @@ N3Parser.prototype = {
     switch (type) {
     case 'IRI':
     case 'abbreviation':
-      if (this._baseIRI === null || absoluteIRI.test(token.value))
+      if (this._base === null || absoluteIRI.test(token.value))
         this._predicate = token.value;
       else
         this._predicate = this._resolveIRI(token);
       break;
     case 'prefixed':
-      if (token.prefix === '_') {
+      if (token.prefix === '_')
         return this._error('Disallowed blank node as predicate', token);
-      }
-      else {
-        var prefix = this._prefixes[token.prefix];
-        if (prefix === undefined)
-          return this._error('Undefined prefix "' + token.prefix + ':"', token);
-        this._predicate = prefix + token.value;
-      }
+      var prefix = this._prefixes[token.prefix];
+      if (prefix === undefined)
+        return this._error('Undefined prefix "' + token.prefix + ':"', token);
+      this._predicate = prefix + token.value;
       break;
     case '.':
     case ']':
@@ -12013,7 +13535,7 @@ N3Parser.prototype = {
   _readObject: function (token) {
     switch (token.type) {
     case 'IRI':
-      if (this._baseIRI === null || absoluteIRI.test(token.value))
+      if (this._base === null || absoluteIRI.test(token.value))
         this._object = token.value;
       else
         this._object = this._resolveIRI(token);
@@ -12064,8 +13586,10 @@ N3Parser.prototype = {
       this._subject = null;
       return this._readBlankNodeTail(token);
     }
-    this._predicate = null;
-    return this._readPredicate(token);
+    else {
+      this._predicate = null;
+      return this._readPredicate(token);
+    }
   },
 
   // ### `_readBlankNodeTail` reads the end of a blank node.
@@ -12101,7 +13625,7 @@ N3Parser.prototype = {
     case 'type':
       var value;
       if (token.prefix === '') {
-        if (this._baseIRI === null || absoluteIRI.test(token.value))
+        if (this._base === null || absoluteIRI.test(token.value))
           value = token.value;
         else
           value = this._resolveIRI(token);
@@ -12133,7 +13657,10 @@ N3Parser.prototype = {
 
     switch (token.type) {
     case 'IRI':
-      item = token.value;
+      if (this._base === null || absoluteIRI.test(token.value))
+        item = token.value;
+      else
+        item = this._resolveIRI(token);
       break;
     case 'prefixed':
       var prefix = this._prefixes[token.prefix];
@@ -12250,7 +13777,7 @@ N3Parser.prototype = {
     // An IRI means this is a quad (only allowed if not already inside a graph).
     case 'IRI':
       if (this._supportsQuads && this._graph === null) {
-        if (this._baseIRI === null || absoluteIRI.test(token.value))
+        if (this._base === null || absoluteIRI.test(token.value))
           graph = token.value;
         else
           graph = this._resolveIRI(token);
@@ -12323,7 +13850,7 @@ N3Parser.prototype = {
     if (token.type !== 'IRI')
       return this._error('Expected IRI to follow prefix "' + this._prefix + ':"', token);
     var prefixIRI;
-    if (this._baseIRI === null || absoluteIRI.test(token.value))
+    if (this._base === null || absoluteIRI.test(token.value))
       prefixIRI = token.value;
     else
       prefixIRI = this._resolveIRI(token);
@@ -12336,14 +13863,11 @@ N3Parser.prototype = {
   _readBaseIRI: function (token) {
     if (token.type !== 'IRI')
       return this._error('Expected IRI to follow base declaration', token);
-    if (token.value.indexOf('#') > 0)
-      return this._error('Invalid base IRI', token);
-    if (this._baseIRI === null || absoluteIRI.test(token.value))
-      this._baseIRI = token.value;
-    else
-      this._baseIRI = this._resolveIRI(token);
-    this._baseIRIPath = this._baseIRI.replace(documentPart, '');
-    this._baseIRIRoot = this._baseIRI.match(rootIRI)[0];
+    try {
+      this._setBase(this._base === null ||
+                    absoluteIRI.test(token.value) ? token.value : this._resolveIRI(token));
+    }
+    catch (error) { this._error(error.message, token); }
     return this._readDeclarationPunctuation;
   },
 
@@ -12398,26 +13922,87 @@ N3Parser.prototype = {
     this._callback(new Error(message + ' at line ' + token.line + '.'));
   },
 
-  // ### `_resolveIRI` resolves an IRI token against the base path
+  // ### `_resolveIRI` resolves a relative IRI token against the base path,
+  // assuming that a base path has been set and that the IRI is indeed relative.
   _resolveIRI: function (token) {
     var iri = token.value;
     switch (iri[0]) {
     // An empty relative IRI indicates the base IRI
-    case undefined:
-      return this._baseIRI;
+    case undefined: return this._base;
     // Resolve relative fragment IRIs against the base IRI
-    case '#':
-      return this._baseIRI     + iri;
+    case '#': return this._base + iri;
     // Resolve relative query string IRIs by replacing the query string
-    case '?':
-      return this._baseIRI.replace(/(?:\?.*)?$/, iri);
-    // Resolve root relative IRIs at the root of the base IRI
+    case '?': return this._base.replace(/(?:\?.*)?$/, iri);
+    // Resolve root-relative IRIs at the root of the base IRI
     case '/':
-      return this._baseIRIRoot + iri;
+      // Resolve scheme-relative IRIs to the scheme
+      return (iri[1] === '/' ? this._baseScheme : this._baseRoot) + this._removeDotSegments(iri);
     // Resolve all other IRIs at the base IRI's path
     default:
-      return this._baseIRIPath + iri;
+      return this._removeDotSegments(this._basePath + iri);
     }
+  },
+
+  // ### `_removeDotSegments` resolves './' and '../' path segments in an IRI as per RFC3986.
+  _removeDotSegments: function (iri) {
+    // Don't modify the IRI if it does not contain any dot segments
+    if (!dotSegments.test(iri))
+      return iri;
+
+    // Start with an imaginary slash before the IRI in order to resolve trailing './' and '../'
+    var result = '', length = iri.length, i = -1, pathStart = -1, segmentStart = 0, next = '/';
+
+    while (i < length) {
+      switch (next) {
+      // The path starts with the first slash after the authority
+      case ':':
+        if (pathStart < 0) {
+          // Skip two slashes before the authority
+          if (iri[++i] === '/' && iri[++i] === '/')
+            // Skip to slash after the authority
+            while ((pathStart = i + 1) < length && iri[pathStart] !== '/')
+              i = pathStart;
+        }
+        break;
+      // Don't modify a query string or fragment
+      case '?':
+      case '#':
+        i = length;
+        break;
+      // Handle '/.' or '/..' path segments
+      case '/':
+        if (iri[i + 1] === '.') {
+          next = iri[++i + 1];
+          switch (next) {
+          // Remove a '/.' segment
+          case '/':
+            result += iri.substring(segmentStart, i - 1);
+            segmentStart = i + 1;
+            break;
+          // Remove a trailing '/.' segment
+          case undefined:
+          case '?':
+          case '#':
+            return result + iri.substring(segmentStart, i) + iri.substr(i + 1);
+          // Remove a '/..' segment
+          case '.':
+            next = iri[++i + 1];
+            if (next === undefined || next === '/' || next === '?' || next === '#') {
+              result += iri.substring(segmentStart, i - 2);
+              // Try to remove the parent path from result
+              if ((segmentStart = result.lastIndexOf('/')) >= pathStart)
+                result = result.substr(0, segmentStart);
+              // Remove a trailing '/..' segment
+              if (next !== '/')
+                return result + '/' + iri.substr(i + 1);
+              segmentStart = i + 1;
+            }
+          }
+        }
+      }
+      next = iri[++i];
+    }
+    return result + iri.substring(segmentStart);
   },
 
   // ## Public methods
@@ -12452,7 +14037,7 @@ N3Parser.prototype = {
       this.addChunk = this._lexer.addChunk;
       this.end = this._lexer.end;
     }
-  }
+  },
 };
 
 // The empty function
@@ -12463,7 +14048,7 @@ function noop() {}
 // Export the `N3Parser` class as a whole.
 module.exports = N3Parser;
 
-},{"./N3Lexer":41}],43:[function(require,module,exports){
+},{"./N3Lexer":46}],48:[function(require,module,exports){
 // **N3Store** objects store N3 triples by graph in memory.
 
 var expandPrefixedName = require('./N3Util').expandPrefixedName;
@@ -12618,11 +14203,7 @@ N3Store.prototype = {
     var graphItem = this._graphs[graph];
     // Create the graph if it doesn't exist yet.
     if (!graphItem) {
-      graphItem = this._graphs[graph] = {
-        subjects: {},
-        predicates: {},
-        objects: {}
-      };
+      graphItem = this._graphs[graph] = { subjects: {}, predicates: {}, objects: {} };
       // Freezing a graph helps subsequent `add` performance,
       // and properties will never be modified anyway.
       Object.freeze(graphItem);
@@ -12803,18 +14384,20 @@ N3Store.prototype = {
 
   // ### `createBlankNode` creates a new blank node, returning its name.
   createBlankNode: function (suggestedName) {
-    var name;
+    var name, index;
+    // Generate a name based on the suggested name
     if (suggestedName) {
-      name = suggestedName = '_:' + suggestedName;
-      var index = 1;
+      name = suggestedName = '_:' + suggestedName, index = 1;
       while (this._entities[name])
         name = suggestedName + index++;
     }
+    // Generate a generic blank node name
     else {
       do { name = '_:b' + this._blankNodeIndex++; }
       while (this._entities[name]);
     }
-    this._entities[name] = this._entityCount++;
+    // Add the blank node to the entities, avoiding the generation of duplicates
+    this._entities[name] = ++this._entityCount;
     return name;
   },
 };
@@ -12824,7 +14407,7 @@ N3Store.prototype = {
 // Export the `N3Store` class as a whole.
 module.exports = N3Store;
 
-},{"./N3Util":46}],44:[function(require,module,exports){
+},{"./N3Util":51}],49:[function(require,module,exports){
 // **N3StreamParser** parses an N3 stream into a triple stream
 var Transform = require('stream').Transform,
     util = require('util'),
@@ -12860,7 +14443,7 @@ util.inherits(N3StreamParser, Transform);
 // Export the `N3StreamParser` class as a whole.
 module.exports = N3StreamParser;
 
-},{"./N3Parser.js":42,"stream":undefined,"util":10}],45:[function(require,module,exports){
+},{"./N3Parser.js":47,"stream":undefined,"util":13}],50:[function(require,module,exports){
 // **N3StreamWriter** serializes a triple stream into an N3 stream
 var Transform = require('stream').Transform,
     util = require('util'),
@@ -12892,7 +14475,7 @@ util.inherits(N3StreamWriter, Transform);
 // Export the `N3StreamWriter` class as a whole.
 module.exports = N3StreamWriter;
 
-},{"./N3Writer.js":47,"stream":undefined,"util":10}],46:[function(require,module,exports){
+},{"./N3Writer.js":52,"stream":undefined,"util":13}],51:[function(require,module,exports){
 // **N3Util** provides N3 utility functions
 
 var Xsd = 'http://www.w3.org/2001/XMLSchema#';
@@ -12992,25 +14575,25 @@ var N3Util = {
 };
 
 // Add the N3Util functions to the given object or its prototype
-function AddN3Util(parent, toPrototype) {
+function addN3Util(parent, toPrototype) {
   for (var name in N3Util)
     if (!toPrototype)
       parent[name] = N3Util[name];
     else
-      parent.prototype[name] = ApplyToThis(N3Util[name]);
+      parent.prototype[name] = applyToThis(N3Util[name]);
 
   return parent;
 }
 
 // Returns a function that applies `f` to the `this` object
-function ApplyToThis(f) {
+function applyToThis(f) {
   return function (a) { return f(this, a); };
 }
 
 // Expose N3Util, attaching all functions to it
-module.exports = AddN3Util(AddN3Util);
+module.exports = addN3Util(addN3Util);
 
-},{}],47:[function(require,module,exports){
+},{}],52:[function(require,module,exports){
 // **N3Writer** writes N3 documents.
 
 // Matches a literal as represented in memory by the N3 library
@@ -13078,7 +14661,9 @@ N3Writer.prototype = {
         // Close the previous graph and start the new one
         this._write((this._subject === null ? '' : (this._graph ? '\n}\n' : '.\n')) +
                     (graph ? this._encodeIriOrBlankNode(graph) + ' {\n' : ''));
-        this._graph = graph, this._subject = null;
+        this._subject = null;
+        // Don't treat identical blank nodes as repeating graphs
+        this._graph = graph[0] !== '[' ? graph : ']';
       }
       // Don't repeat the subject if it's the same
       if (this._subject === subject) {
@@ -13116,16 +14701,18 @@ N3Writer.prototype = {
   },
 
   // ### `_encodeIriOrBlankNode` represents an IRI or blank node
-  _encodeIriOrBlankNode: function (iri) {
-    // A blank node is represented as-is
-    if (iri[0] === '_' && iri[1] === ':') return iri;
+  _encodeIriOrBlankNode: function (entity) {
+    // A blank node or list is represented as-is
+    var firstChar = entity[0];
+    if (firstChar === '[' || firstChar === '(' || firstChar === '_' && entity[1] === ':')
+      return entity;
     // Escape special characters
-    if (escape.test(iri))
-      iri = iri.replace(escapeAll, characterReplacer);
+    if (escape.test(entity))
+      entity = entity.replace(escapeAll, characterReplacer);
     // Try to represent the IRI as prefixed name
-    var prefixMatch = this._prefixRegex.exec(iri);
-    return !prefixMatch ? '<' + iri + '>' :
-           (!prefixMatch[1] ? iri : this._prefixIRIs[prefixMatch[1]] + prefixMatch[2]);
+    var prefixMatch = this._prefixRegex.exec(entity);
+    return !prefixMatch ? '<' + entity + '>' :
+           (!prefixMatch[1] ? entity : this._prefixIRIs[prefixMatch[1]] + prefixMatch[2]);
   },
 
   // ### `_encodeLiteral` represents a literal
@@ -13146,6 +14733,9 @@ N3Writer.prototype = {
   _encodeSubject: function (subject) {
     if (subject[0] === '"')
       throw new Error('A literal as subject is not allowed: ' + subject);
+    // Don't treat identical blank nodes as repeating subjects
+    if (subject[0] === '[')
+      this._subject = ']';
     return this._encodeIriOrBlankNode(subject);
   },
 
@@ -13175,7 +14765,7 @@ N3Writer.prototype = {
   // ### `addTriple` adds the triple to the output stream
   addTriple: function (subject, predicate, object, graph, done) {
     // The triple was given as a triple object, so shift parameters
-    if (typeof object !== 'string')
+    if (object === undefined)
       this._writeTriple(subject.subject, subject.predicate, subject.object,
                         subject.graph || '', predicate);
     // The optional `graph` parameter was not provided
@@ -13233,6 +14823,58 @@ N3Writer.prototype = {
     this._write(hasPrefixes ? '\n' : '', done);
   },
 
+  // ### `blank` creates a blank node with the given content
+  blank: function (predicate, object) {
+    var children = predicate, child, length;
+    // Empty blank node
+    if (predicate === undefined)
+      children = [];
+    // Blank node passed as blank("predicate", "object")
+    else if (typeof predicate === 'string')
+      children = [{ predicate: predicate, object: object }];
+    // Blank node passed as blank({ predicate: predicate, object: object })
+    else if (!('length' in predicate))
+      children = [predicate];
+
+    switch (length = children.length) {
+    // Generate an empty blank node
+    case 0:
+      return '[]';
+    // Generate a non-nested one-triple blank node
+    case 1:
+      child = children[0];
+      if (child.object[0] !== '[')
+        return '[ ' + this._encodePredicate(child.predicate) + ' ' +
+                      this._encodeObject(child.object) + ' ]';
+    // Generate a multi-triple or nested blank node
+    default:
+      var contents = '[';
+      // Write all triples in order
+      for (var i = 0; i < length; i++) {
+        child = children[i];
+        // Write only the object is the predicate is the same as the previous
+        if (child.predicate === predicate)
+          contents += ', ' + this._encodeObject(child.object);
+        // Otherwise, write the predicate and the object
+        else {
+          contents += (i ? ';\n  ' : '\n  ') +
+                      this._encodePredicate(child.predicate) + ' ' +
+                      this._encodeObject(child.object);
+          predicate = child.predicate;
+        }
+      }
+      return contents + '\n]';
+    }
+  },
+
+  // ### `list` creates a list node with the given content
+  list: function (elements) {
+    var length = elements && elements.length || 0, contents = new Array(length);
+    for (var i = 0; i < length; i++)
+      contents[i] = this._encodeObject(elements[i]);
+    return '(' + contents.join(' ') + ')';
+  },
+
   // ### `_prefixRegex` matches a prefixed name or IRI that begins with one of the added prefixes
   _prefixRegex: /$0^/,
 
@@ -13281,8 +14923,63 @@ function characterReplacer(character) {
 // Export the `N3Writer` class as a whole.
 module.exports = N3Writer;
 
-},{}],48:[function(require,module,exports){
-(function (process){
+},{}],53:[function(require,module,exports){
+'use strict';
+
+var qs = require('querystring')
+  , url = require('url')
+  , xtend = require('xtend');
+
+function hasRel(x) {
+  return x && x.rel;
+}
+
+function intoRels (acc, x) {
+  function splitRel (rel) {
+    acc[rel] = xtend(x, { rel: rel });
+  }
+
+  x.rel.split(/\s+/).forEach(splitRel);
+
+  return acc;
+}
+
+function createObjects (acc, p) {
+  // rel="next" => 1: rel 2: next
+  var m = p.match(/\s*(.+)\s*=\s*"?([^"]+)"?/)
+  if (m) acc[m[1]] = m[2];
+  return acc;
+}
+
+function parseLink(link) {
+  try {
+    var parts     =  link.split(';')
+      , linkUrl   =  parts.shift().replace(/[<>]/g, '')
+      , parsedUrl =  url.parse(linkUrl)
+      , qry       =  qs.parse(parsedUrl.query);
+
+    var info = parts
+      .reduce(createObjects, {});
+    
+    info = xtend(qry, info);
+    info.url = linkUrl;
+    return info;
+  } catch (e) {
+    return null;
+  }
+}
+
+module.exports = function (linkHeader) {
+  if (!linkHeader) return null;
+
+  return linkHeader.split(/,\s*</)
+   .map(parseLink)
+   .filter(hasRel)
+   .reduce(intoRels, {});
+};
+
+},{"querystring":9,"url":10,"xtend":59}],54:[function(require,module,exports){
+(function (process,global){
 (function (global, undefined) {
     "use strict";
 
@@ -13457,10 +15154,10 @@ module.exports = N3Writer;
 
     attachTo.setImmediate = setImmediate;
     attachTo.clearImmediate = clearImmediate;
-}(new Function("return this")()));
+}(typeof self === "undefined" ? typeof global === "undefined" ? this : global : self));
 
-}).call(this,require('_process'))
-},{"_process":8}],49:[function(require,module,exports){
+}).call(this,require('_process'),typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
+},{"_process":5}],55:[function(require,module,exports){
 var XSD_INTEGER = 'http://www.w3.org/2001/XMLSchema#integer';
 
 module.exports = function SparqlGenerator() { return { stringify: toQuery }; };
@@ -13494,25 +15191,26 @@ function toQuery(q) {
 
   if (q.updates)
     query += mapJoin(q.updates, toUpdate, ';\n');
-  else if (q.values)
-    query += patterns.values(q);
 
-  if (q.order)
-    query += 'ORDER BY ' + mapJoin(q.order, function (it) {
-      var expr = toExpression(it.expression);
-      return !it.descending ? expr : 'DESC(' + expr + ')';
-    }) + '\n';
   if (q.group)
     query += 'GROUP BY ' + mapJoin(q.group, function (it) {
       return isString(it.expression) ? it.expression : '(' + toExpression(it.expression) + ')';
     }) + '\n';
   if (q.having)
     query += 'HAVING (' + mapJoin(q.having, toExpression) + ')\n';
+  if (q.order)
+    query += 'ORDER BY ' + mapJoin(q.order, function (it) {
+      var expr = toExpression(it.expression);
+      return !it.descending ? expr : 'DESC(' + expr + ')';
+    }) + '\n';
 
   if (q.offset)
     query += 'OFFSET ' + q.offset + '\n';
   if (q.limit)
     query += 'LIMIT ' + q.limit + '\n';
+
+  if (q.values)
+    query += patterns.values(q);
   return query.trim();
 }
 
@@ -13647,7 +15345,7 @@ function toEntity(value) {
       return value;
     // literal
     case '"':
-      var match = value.match(/^"(.*)"(?:(@.+)|\^\^(.+))?$/) || {},
+      var match = value.match(/^"([^]*)"(?:(@.+)|\^\^(.+))?$/) || {},
           lexical = match[1] || '', language = match[2] || '', datatype = match[3];
       value = '"' + lexical.replace(escape, escapeReplacer) + '"' + language;
       if (datatype) {
@@ -13720,7 +15418,7 @@ function mapJoin(array, func, sep) { return array.map(func).join(isString(sep) ?
 // Indents each line of the string
 function indent(text) { return text.replace(/^/gm, '  '); }
 
-},{}],50:[function(require,module,exports){
+},{}],56:[function(require,module,exports){
 (function (process){
 /* parser generated by jison 0.4.15 */
 /*
@@ -13816,7 +15514,7 @@ case 1:
     
 break;
 case 2:
-this.$ = extend({ type: 'query' }, $$[$0-1], $$[$0]);
+this.$ = extend($$[$0-1], $$[$0], { type: 'query' });
 break;
 case 3:
 
@@ -15229,7 +16927,7 @@ if (typeof module !== 'undefined' && require.main === module) {
 }
 }
 }).call(this,require('_process'))
-},{"_process":8,"fs":2,"path":7}],51:[function(require,module,exports){
+},{"_process":2,"fs":2,"path":2}],57:[function(require,module,exports){
 var Parser = require('./lib/SparqlParser').Parser;
 var Generator = require('./lib/SparqlGenerator');
 
@@ -15254,7 +16952,7 @@ module.exports = {
   Generator: Generator,
 };
 
-},{"./lib/SparqlGenerator":49,"./lib/SparqlParser":50}],52:[function(require,module,exports){
+},{"./lib/SparqlGenerator":55,"./lib/SparqlParser":56}],58:[function(require,module,exports){
 (function (global){
 /*global unescape, module, define, window, global*/
 
@@ -16143,4 +17841,25 @@ var UriTemplate = (function () {
 ));
 
 }).call(this,typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{}]},{},[1]);
+},{}],59:[function(require,module,exports){
+module.exports = extend
+
+var hasOwnProperty = Object.prototype.hasOwnProperty;
+
+function extend() {
+    var target = {}
+
+    for (var i = 0; i < arguments.length; i++) {
+        var source = arguments[i]
+
+        for (var key in source) {
+            if (hasOwnProperty.call(source, key)) {
+                target[key] = source[key]
+            }
+        }
+    }
+
+    return target
+}
+
+},{}]},{},[14]);
