@@ -9,7 +9,8 @@
   "keywords": [
     "linked data fragments",
     "ldf",
-    "client"
+    "client",
+    "web-components"
   ],
   "main": "ldf-client.html",
   "license": "Apache 2.0",
